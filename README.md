@@ -89,11 +89,19 @@ for the fast, tearing comparison. A serial terminal must assert DTR
 (`pio device monitor` does; a bare port read may not) or the board's output is
 dropped.
 
-**A build that prints must never print to nobody.** The framework's `Serial`
-write blocks on a CDC that no host is reading, and a blocked write takes the
-USB device down with it - the panel keeps drawing, but the board leaves the
-bus and needs a replug. The sample therefore checks `Serial` (the connected
-flag) before it writes, in both the frame meter and the port's log hook.
+**A build that prints checks that someone is listening.** The framework's
+`Serial` write has nothing to do when no host is attached, so the sample asks
+`Serial` (the connected flag) before writing, in both the frame meter and the
+port's log hook. What an unwatched write does to this board was *not*
+established: a meter build disappearing from the USB bus turned out to be the
+reset below, not the write.
+
+**Flashing on this board: press RESET after the upload.** `pio run -t upload`
+does its job - it resets the board into BOOTSEL, writes the image and verifies
+it - but the tool's own reboot into the application does not bring it up here.
+The board sits with no port (and, as far as it was looked at, no picture) until
+the RESET button is pressed. That is the workflow on this bench, not a fault in
+the build.
 
 **The default is double buffered on purpose.** Drawing straight into the buffer
 the scanout is reading is several times faster, but the panel is looking at the
