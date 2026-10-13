@@ -49,7 +49,15 @@ void loop(void)
     if (!lvds_canvas_ready()) {
         return;
     }
-    scene_draw(g_frame++);
+    /* Every couple of seconds the palette is switched to another bank. The
+       slots are re-coloured in place, so the picture already on the glass
+       changes with it, and the redraw that follows is only the scene moving
+       on. */
+    if (g_frame % 120 == 0) {
+        scene_palette_switch(g_frame / 120);
+    }
+    scene_draw(g_frame);
     lvds_canvas_present();
+    g_frame++;
     delay(20);
 }

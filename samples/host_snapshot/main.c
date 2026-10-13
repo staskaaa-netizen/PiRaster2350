@@ -50,12 +50,33 @@ int main(int argc, char **argv)
     expect("the border's other corner",
            panel_at_view(lvds_canvas_width() - 1, lvds_canvas_height() - 1),
            lvds_rgb888(lvds_palette_color(SCENE_BORDER_COLOR)));
-    expect("a swatch, through the turn",
-           panel_at_view(SCENE_SWATCH_X + 4, SCENE_SWATCH_Y + 4),
-           lvds_rgb888(lvds_palette_color(LVDS_COL_GRAY_192)));
+    {
+        int sx, sy, sw, sh;
+        scene_swatch_rect(0, &sx, &sy, &sw, &sh);
+        expect("a swatch, through the turn", panel_at_view(sx + sw / 2, sy + sh / 2),
+               lvds_rgb888(lvds_palette_color(LVDS_COL_GRAY_192)));
+    }
     expect("the moving disc, on frame 0",
            panel_at_view(SCENE_MOVING_BAR_X, SCENE_MOVING_BAR_Y),
            lvds_rgb888(lvds_palette_color(LVDS_COL_GREEN)));
+
+    /* The live palette: switch a bank and draw again. The colours the scene
+       asks for by name are the bank's, and the ones the bank does not touch
+       are unchanged. */
+    scene_palette_switch(1);
+    scene_draw(0);
+    lvds_canvas_present();
+    expect("the switch, in the colour the palette reports",
+           panel_at_view(SCENE_MOVING_BAR_X, SCENE_MOVING_BAR_Y),
+           lvds_rgb888(lvds_palette_color(LVDS_COL_GREEN)));
+    {
+        int sx, sy, sw, sh;
+        scene_swatch_rect(0, &sx, &sy, &sw, &sh);
+        expect("the switch, a colour it did not touch",
+               panel_at_view(sx + sw / 2, sy + sh / 2),
+               lvds_rgb888(lvds_palette_color(LVDS_COL_GRAY_192)));
+    }
+    scene_palette_switch(0);
 
     if (!host_panel_write_bmp(path, true)) {
         fprintf(stderr, "snapshot: cannot write %s\n", path);

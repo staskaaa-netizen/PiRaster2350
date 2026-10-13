@@ -34,11 +34,17 @@ static const lvds_palette_color_def_t g_color_def[LVDS_COL_COUNT] = {
     [LVDS_COL_TOOL_TIP] = {"tool_tip", "#242506"}
 };
 
-/* The colours as the panel reads them (5-6-5), and **not** palette slots: a
-   slot is taken when a colour is first *used*, never when this table is read.
-   A picture that brings colours of its own has to find the palette empty when
-   it starts, or its colours land on whatever was parsed before it. */
+/* What each name means now (5-6-5), and **not** palette slots: a slot is taken
+   when a colour is first *used*, never when this table is read. A picture that
+   brings colours of its own has to find the palette empty when it starts, or
+   its colours land on whatever was parsed before it. */
 static uint16_t g_color_rgb565[LVDS_COL_COUNT];
+/* The slot each name holds, and the value that slot was given. A name whose
+   value changes while it holds a slot has that slot re-coloured in place -
+   that is the whole of the dynamic switch. */
+static lvds_color_t g_slot[LVDS_COL_COUNT];
+static uint16_t g_slot_value[LVDS_COL_COUNT];
+static bool g_has_slot[LVDS_COL_COUNT];
 static bool g_palette_ready;
 
 static int lvds_palette_hex_nibble(char c)
@@ -93,6 +99,9 @@ static uint16_t lvds_palette_parse_hex(const char *hex)
 void lvds_palette_reset(void)
 {
     g_palette_ready = false;
+    for (int i = 0; i < LVDS_COL_COUNT; i++) {
+        g_has_slot[i] = false;
+    }
 }
 
 void lvds_palette_init(void)
@@ -114,9 +123,48 @@ lvds_color_t lvds_palette_color(lvds_palette_color_id_t id)
     if ((unsigned)id >= (unsigned)LVDS_COL_COUNT) {
         id = LVDS_COL_WHITE_WARM;
     }
-    /* The slot is taken here, on the first frame that uses this colour - see
-       `g_color_rgb565`. */
-    return lvds_target_slot(g_color_rgb565[id]);
+    if (!g_has_slot[id]) {
+        /* The slot is taken here, on the first frame that uses this colour -
+           see `g_color_rgb565`. */
+        g_slot[id] = lvds_target_slot(g_color_rgb565[id]);
+        g_slot_value[id] = g_color_rgb565[id];
+        g_has_slot[id] = true;
+    } else if (g_slot_value[id] != g_color_rgb565[id]) {
+        /* The name was redefined under a slot we already hold: re-colour that
+           slot rather than take another one, so a switch costs nothing and
+           everything already drawn with it changes too. */
+        lvds_target_slot_set(g_slot[id], g_color_rgb565[id]);
+        g_slot_value[id] = g_color_rgb565[id];
+    }
+    return g_slot[id];
+}
+
+void lvds_palette_define(lvds_palette_color_id_t id, uint16_t rgb565)
+{
+    if (!g_palette_ready) {
+        lvds_palette_init();
+    }
+    if ((unsigned)id >= (unsigned)LVDS_COL_COUNT) {
+        return;
+    }
+    g_color_rgb565[id] = rgb565;
+}
+
+void lvds_palette_defaults(void)
+{
+    g_palette_ready = false;
+    lvds_palette_init();
+}
+
+uint16_t lvds_palette_value(lvds_palette_color_id_t id)
+{
+    if (!g_palette_ready) {
+        lvds_palette_init();
+    }
+    if ((unsigned)id >= (unsigned)LVDS_COL_COUNT) {
+        return 0;
+    }
+    return g_color_rgb565[id];
 }
 
 const char *lvds_palette_color_name(lvds_palette_color_id_t id)

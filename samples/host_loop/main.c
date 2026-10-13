@@ -42,13 +42,17 @@ int main(int argc, char **argv)
            host_panel_width(), host_panel_height());
 
     for (int frame = 0; frame < frames; frame++) {
+        /* A bank a frame: the picture is drawn with a different palette every
+           time round, which is the switch doing its work. */
+        scene_palette_switch(frame);
         scene_draw(frame);
         lvds_canvas_present();
         if (!host_panel_write_bmp(path, true)) {
             fprintf(stderr, "host_loop: cannot write %s\n", path);
             return 1;
         }
-        printf("host_loop: frame %d written to %s\n", frame, path);
+        printf("host_loop: frame %d, palette %d, written to %s\n", frame,
+               frame % SCENE_PALETTE_PHASES, path);
     }
     printf("host_loop: %u present(s)\n", host_panel_presents());
     return 0;

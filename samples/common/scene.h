@@ -13,12 +13,22 @@
 
 void scene_draw(int frame);
 
+/* Where swatch `index` (0..15) is drawn, in view coordinates. The layout
+   follows the view, so the same scene sits well on an upright panel and on a
+   turned one; a check asks for the same rectangle the scene drew. */
+void scene_swatch_rect(int index, int *x, int *y, int *w, int *h);
+
+/* Switch the palette the scene draws with. Phase 0 is the panel's own colours,
+   and the scene returns to them; the other phases are banks of their own.
+   Cheap and immediate: the slots are re-coloured in place, so on the glass the
+   picture changes without being redrawn. */
+void scene_palette_switch(int phase);
+#define SCENE_PALETTE_PHASES 4
+
 /* Where the scene puts the things a check wants to find, in view coordinates. */
 #define SCENE_BORDER_COLOR LVDS_COL_GRAY_192
 #define SCENE_BACKGROUND_COLOR LVDS_COL_BLACK
-#define SCENE_SWATCH_X 24
-#define SCENE_SWATCH_Y 560
 #define SCENE_MOVING_BAR_X 40
-#define SCENE_MOVING_BAR_Y 420
+#define SCENE_MOVING_BAR_Y 380
 
 #endif /* SCENE_H */

@@ -18,7 +18,13 @@ extern "C" {
    A colour does not take a palette slot here. `lvds_palette_color()` asks the
    target for one, and the target hands them out on first use (see
    `lvds_target.h`), so a picture that brings colours of its own finds the
-   palette empty as long as it says so with `lvds_canvas_palette_reset()`. */
+   palette empty as long as it says so with `lvds_canvas_palette_reset()`.
+
+   A name can also be **redefined while the picture runs**
+   (`lvds_palette_define()`): the slot it already holds is re-coloured in
+   place, so on a scanout target everything drawn in that colour changes on the
+   next line without anything being redrawn. That is the dynamic palette
+   switch, and it costs no slots and no repaint. */
 typedef enum {
     LVDS_COL_GRAY_192 = 0,
     LVDS_COL_GRAY_128,
@@ -46,6 +52,15 @@ void lvds_palette_reset(void);
 
 lvds_color_t lvds_palette_color(lvds_palette_color_id_t id);
 const char *lvds_palette_color_name(lvds_palette_color_id_t id);
+
+/* What a name means from now on, 5-6-5. The slot a name already holds is
+   re-coloured the next time the colour is asked for. */
+void lvds_palette_define(lvds_palette_color_id_t id, uint16_t rgb565);
+/* Put every name back to the built-in table. */
+void lvds_palette_defaults(void);
+/* What a name means now - either what the table says, or the last
+   `lvds_palette_define()` for it. */
+uint16_t lvds_palette_value(lvds_palette_color_id_t id);
 
 #ifdef __cplusplus
 }

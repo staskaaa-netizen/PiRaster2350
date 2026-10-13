@@ -13,6 +13,12 @@ something that must not move without a reason that can be written down here.
 Owns: a colour, the view and its turn, the two writing primitives, the
 primitives built on them, the palette's names and values, and the fonts.
 
+The palette's *names and values* are the core's; the *slots* are the target's.
+That split is what makes a live switch possible: redefining a name
+(`lvds_palette_define()`) makes the core re-colour the slot it already holds
+(`lvds_target_slot_set()`), so nothing is redrawn and no slot is wasted. A core
+that re-took slots on every switch would fill the table up in sixteen moves.
+
 Does not own: any hardware. It compiles for a host, for the boards (it is
 `-Wall -Wextra` clean under an ARM toolchain) and for anything that can write
 two primitives. It has no threads, no globals that grow, and no I/O.
@@ -43,6 +49,7 @@ dozen lines (see `targets/host/host_panel.c`) and the biggest one
 | `lvds_target_clear` | the framebuffer | a loop over pixels |
 | `lvds_target_present` | the scanout | a queue, a thread or a DMA path |
 | `lvds_target_slot` | the palette | a colour-quantiser above the target |
+| `lvds_target_slot_set` | the palette | a new slot taken for a colour that has one |
 | `lvds_target_palette_reset` | the palette | a no-op that a caller relies on |
 
 If a target ever needs to know the view, or the core ever needs to know a

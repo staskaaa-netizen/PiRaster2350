@@ -73,6 +73,15 @@ lvds_color_t lvds_target_slot(uint16_t rgb565)
     return rgb565;
 }
 
+void lvds_target_slot_set(lvds_color_t slot, uint16_t rgb565)
+{
+    /* Nothing to re-colour in place. A host frame is 32bpp, so a colour that
+       is redefined shows up the next time something is *drawn* with it - it
+       cannot change pixels that are already there the way the glass can. */
+    (void)slot;
+    (void)rgb565;
+}
+
 void lvds_target_palette_reset(void)
 {
     /* Nothing to give back. */

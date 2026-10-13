@@ -31,12 +31,14 @@
 #define LVDS_PANEL_ACTIVE_HEIGHT 604
 #endif
 
-/* How the glass is bolted: 90 = its top edge ends up on the operator's right,
-   so the picture is turned back a quarter and the operator reads 600x800.
-   270 is the other way round, 0 an unturned panel. This is the one number that
-   decides what "up" means for everything drawn above the core. */
+/* How the glass is bolted. 0 - the default here - is a panel read upright:
+   the picture is the panel's own 800x600. 90 is the machine's mounting, where
+   the panel is bolted turned a quarter and the operator reads 600x800; 270 is
+   the same quarter the other way. This is the one number that decides what
+   "up" means for everything drawn above the core, and a build whose panel is
+   turned sets it there (`-DLVDS_PANEL_TURN=90`). */
 #ifndef LVDS_PANEL_TURN
-#define LVDS_PANEL_TURN 90
+#define LVDS_PANEL_TURN 0
 #endif
 
 /* The scanout clock. The panel's nominal 40 MHz is what the machine runs at

@@ -797,6 +797,14 @@ lvds_color_t lvds_target_slot(uint16_t rgb565)
     return palette_lookup(rgb565);
 }
 
+/* Re-colour a slot already handed out: no new slot is taken, the LUT is
+   rebuilt, and core1 picks the new colour up on the next line it prepares.
+   This is what makes a palette switch instant and free of churn. */
+void lvds_target_slot_set(lvds_color_t slot, uint16_t rgb565)
+{
+    palette_set((uint8_t)(slot & 0x0f), rgb565);
+}
+
 bool rp2350_panel_backbuffer_in_psram(void)
 {
     return g_backbuffer_active;

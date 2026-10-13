@@ -33,6 +33,11 @@ extern "C" {
        owns the palette (sixteen slots, taken on first use); a 32bpp target
        hands the word back. This is the one call in the seam that is asked for
        its *result* rather than told what to draw.
+     - `lvds_target_slot_set` re-colours a slot the caller already holds. It is
+       what makes a palette switch possible without churn: the slot keeps its
+       number, so everything already drawn with it takes the new colour - on a
+       scanout target, on the next line, with no redraw - and no new slot is
+       taken. A target with no palette of its own does nothing.
      - `lvds_target_palette_reset` gives the palette back: after it, the next
        colour asked for takes the first slot again. A picture that brings
        colours of its own - a boot splash - calls it when it is done, or the
@@ -49,6 +54,7 @@ void lvds_target_fill_rect(int x, int y, int w, int h, lvds_color_t color);
 void lvds_target_clear(lvds_color_t color);
 void lvds_target_present(void);
 lvds_color_t lvds_target_slot(uint16_t rgb565);
+void lvds_target_slot_set(lvds_color_t slot, uint16_t rgb565);
 void lvds_target_palette_reset(void);
 
 #ifdef __cplusplus

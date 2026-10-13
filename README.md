@@ -28,7 +28,7 @@ including `cnc.h` and calls four port hooks instead.
     host/                  the panel on a desk: a 32bpp frame in RAM + a BMP writer
     rp2350/                the panel itself: HSTX, DMA, core1, PSRAM, the port
   samples/
-    common/scene.{h,c}     the one picture every sample draws
+    common/scene.{h,c}     the one picture every sample draws, and the palette banks
     host_loop/             a while loop that draws and writes frames
     host_snapshot/         one frame, checked pixel by pixel - a sample that is a test
     rp2350_panel/          the same picture, on the glass
@@ -46,6 +46,16 @@ Two rules hold the split together:
 The full statement of who owns what is in [docs/boundaries.md](docs/boundaries.md).
 What the hardware limits are - and they are not negotiable - is in
 [LIMITS.md](LIMITS.md).
+
+The panel is drawn **upright by default**. A glass bolted turned a quarter -
+the machine's own mounting - is one build flag (`-DLVDS_PANEL_TURN=90`, see
+`platformio.ini`), and the layout follows it.
+
+**The palette is live.** A colour's name can be redefined while the picture
+runs (`lvds_palette_define()`): on the glass the slot it already holds is
+re-coloured in place, so everything drawn in that colour changes with it on the
+next scanline, with no redraw and no slot churn. `scene_palette_switch()` in the
+samples walks four banks to show it.
 
 ## Build and run
 

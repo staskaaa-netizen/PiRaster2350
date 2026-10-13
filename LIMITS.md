@@ -19,9 +19,11 @@ in the module's own notes (`uCNC/src/modules/lvds_renderer/README.md`).
   board/overclock boundary, not a panel requirement.
 * When testing clocks, change the clock values only - never the scanout
   architecture in the same breath.
-* The glass is mounted **turned a quarter** (`LVDS_PANEL_TURN 90`) and the
-  operator reads 600x800. `270` and `0` are the other two ways round. A picture
-  that comes out the wrong way up is that one number.
+* The machine's glass is mounted **turned a quarter** and the operator reads
+  600x800; that is `LVDS_PANEL_TURN 90`. This project draws **upright by
+  default** (`0`), and the turned mounting is a build option, `270` being the
+  same quarter the other way. A picture that comes out the wrong way up is that
+  one number.
 
 ## The frame carries 604 active lines against a 600-line glass
 
@@ -51,6 +53,11 @@ frame, and do not treat the number as tunable.
 * A slot is taken when a colour is first **used**, never when the table is
   parsed. That was a real fault: a picture that brought its own colours found
   the palette already filled and came out in the panel's greys (2026-09-27).
+* A name can be redefined while the picture runs, and the switch is free: the
+  slot keeps its number and is re-coloured in place, so on the glass everything
+  already drawn in that colour changes with it, on the next line core1
+  prepares, with no redraw and no slot churn. On a target with no palette (the
+  host one) the new colour shows only where it is drawn next.
 * A picture that brings colours of its own (a boot splash) must call
   `lvds_canvas_palette_reset()` when it is done, or the screen that follows is
   drawn in what it left behind.
