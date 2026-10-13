@@ -28,7 +28,11 @@
 #define LVDS_SAMPLE_FPS 0
 #endif
 
-static int g_frame;
+#define SCENE_STEP_MS 125      /* the moving disc: eight steps a second */
+#define SCENE_PALETTE_MS 3000  /* a palette bank every three seconds */
+#define FRAME_MS 20            /* the loop's own pace, ~50 frames a second */
+
+static uint32_t g_next_frame_ms;
 
 #if LVDS_SAMPLE_FPS
 #define FPS_FRAMES 60
@@ -44,6 +48,13 @@ static void fps_report(void)
         g_fps_start_ms = now;
     }
     if (++g_fps_frames < FPS_FRAMES) {
+        return;
+    }
+    /* Nobody listening, nothing to say: a write with no terminal attached can
+       block on the CDC and take the USB device down with it - the panel goes
+       on drawing, but the board leaves the bus. */
+    if (!Serial) {
+        g_fps_frames = 0;
         return;
     }
     span = now - g_fps_start_ms;
@@ -69,7 +80,9 @@ extern "C" void lvds_port_log(const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    Serial.print(buf);
+    if (Serial) {
+        Serial.print(buf);
+    }
 }
 
 void setup(void)
@@ -91,22 +104,29 @@ void setup(void)
 
 void loop(void)
 {
+    uint32_t now = millis();
+
     if (!lvds_canvas_ready()) {
         return;
     }
-    /* Every couple of seconds the palette is switched to another bank. The
-       slots are re-coloured in place, so the picture already on the glass
-       changes with it, and the redraw that follows is only the scene moving
-       on. */
-    if (g_frame % 120 == 0) {
-        scene_palette_switch(g_frame / 120);
+#if !LVDS_SAMPLE_FPS
+    /* Paced by the clock, not by the frame count: a demo whose speed depends
+       on how fast the loop happens to run is a different demo on every build.
+       The frame meter build skips the pace, because what it measures is the
+       cost of a frame. */
+    if ((int32_t)(now - g_next_frame_ms) < 0) {
+        return;
     }
-    scene_draw(g_frame);
-    lvds_canvas_present();
-    g_frame++;
+    g_next_frame_ms = now + FRAME_MS;
+#endif
+
+    /* The palette bank changes with the clock too. The slots are re-coloured
+       in place, so the picture already on the glass changes with it, and the
+       redraw that follows is only the scene moving on. */
+    scene_palette_switch((int)(now / SCENE_PALETTE_MS));
+    scene_draw((int)(now / SCENE_STEP_MS));
 #if LVDS_SAMPLE_FPS
     fps_report();
-#else
-    delay(20);
 #endif
+    lvds_canvas_present();
 }

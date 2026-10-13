@@ -83,11 +83,23 @@ project answers "is this fast enough for a game", on the panel, rather than
 guessing from datasheets.
 
 Two meters, because the answer depends on where the draw buffer lives:
-`rp2350_panel_fps` draws into SRAM (the small, fast target), and
-`rp2350_panel_psram_fps` adds the PSRAM backbuffer the machine uses, so the
-print shows what the copy in `present()` costs. A serial terminal must assert
-DTR (`pio device monitor` does; a bare port read may not) or the board's output
-is dropped.
+`rp2350_panel_fps` uses the double-buffered PSRAM path (the default, and the
+machine's), and `rp2350_panel_sram_fps` draws straight into the scanout buffer
+for the fast, tearing comparison. A serial terminal must assert DTR
+(`pio device monitor` does; a bare port read may not) or the board's output is
+dropped.
+
+**A build that prints must never print to nobody.** The framework's `Serial`
+write blocks on a CDC that no host is reading, and a blocked write takes the
+USB device down with it - the panel keeps drawing, but the board leaves the
+bus and needs a replug. The sample therefore checks `Serial` (the connected
+flag) before it writes, in both the frame meter and the port's log hook.
+
+**The default is double buffered on purpose.** Drawing straight into the buffer
+the scanout is reading is several times faster, but the panel is looking at the
+picture while it is half redrawn - a screen clear per frame reads as a flicker -
+which is the lesson LeanCam already learned. Single buffering is an explicit
+choice, never the default.
 
 The samples have no RTOS, no tasks, no callbacks and no state machines: draw,
 present, repeat. `samples/common/scene.c` is the whole demo, and it is the same

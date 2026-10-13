@@ -90,8 +90,15 @@ frame, and do not treat the number as tunable.
   colours). A second, *drawing* buffer is the only part that is optional, and
   it is the expensive one: in PSRAM it costs another 241 KB of PSRAM **and** a
   240 KB copy in `present()` every frame - 33 ms a frame against 3 ms measured
-  on the panel. Drawing straight into the scanout buffer (this project's
-  default) needs no second buffer at all.
+  on the panel.
+
+  **That second buffer is not optional in practice.** Drawing straight into the
+  scanout buffer is fast but the panel reads the picture while it is being
+  half-redrawn, and a screen clear per frame reads as a flicker; the bench saw
+  exactly that. The double buffer (draw into PSRAM, present a whole frame) is
+  what makes the video stable - the same reason LeanCam put its buffers in
+  PSRAM - so it is this project's default, and single buffering is an explicit
+  choice for a still panel, a measurement, or a board with no PSRAM.
 
 * **No PSRAM scanout and no DMA present.** The last was measured at roughly
   7.3 ms for 240,000 bytes and still produced display garbage. `present` is a
