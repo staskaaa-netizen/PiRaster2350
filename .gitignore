@@ -1,0 +1,11 @@
+# PlatformIO
+.pio/
+
+# The host samples' output and binaries
+samples/host_loop/host_loop
+samples/host_loop/host_loop.exe
+samples/host_snapshot/host_snapshot
+samples/host_snapshot/host_snapshot.exe
+frame.bmp
+snapshot.bmp
+*.o
