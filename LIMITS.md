@@ -70,6 +70,29 @@ frame, and do not treat the number as tunable.
 * Scanout memory is **static, aligned and in SRAM**: the framebuffer, the core1
   line buffers, the descriptor ring, the core1 stack, the HSTX/palette/LUT
   state. Nothing large and automatic goes on the core1 path.
+
+  What that reserves, on the RP2350's 512 KB - the build reports 297,704 B in
+  use, and this is where it goes:
+
+  | what | bytes | optional? |
+  | --- | --- | --- |
+  | 4bpp scanout framebuffer, 800x604 | 241,600 | no - the scanout reads it every line, and it must be SRAM |
+  | the four spare active lines (the panel's close) | 1,600 | no - see above |
+  | four active line buffers (one scanline, 7 phases) | 14,784 | no |
+  | two inactive line buffers (blanking, and vsync) | 7,392 | no |
+  | descriptor ring, 1024 entries | 4,096 | no |
+  | core1 stack | 8,196 | no |
+  | palette + colour LUT (7 phases x 256) | 7,217 | no |
+  | the program's own data (USB stack and the rest) | ~14,000 | - |
+
+  So about 285 KB is the scanout path itself, and **the framebuffer is 81% of
+  it**: 4bpp is already the floor for this path (1bpp would be 60 KB, and two
+  colours). A second, *drawing* buffer is the only part that is optional, and
+  it is the expensive one: in PSRAM it costs another 241 KB of PSRAM **and** a
+  240 KB copy in `present()` every frame - 33 ms a frame against 3 ms measured
+  on the panel. Drawing straight into the scanout buffer (this project's
+  default) needs no second buffer at all.
+
 * **No PSRAM scanout and no DMA present.** The last was measured at roughly
   7.3 ms for 240,000 bytes and still produced display garbage. `present` is a
   CPU copy from the PSRAM draw buffer into the SRAM framebuffer.
