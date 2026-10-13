@@ -56,9 +56,12 @@ int main(int argc, char **argv)
         expect("a swatch, through the turn", panel_at_view(sx + sw / 2, sy + sh / 2),
                lvds_rgb888(lvds_palette_color(LVDS_COL_GRAY_192)));
     }
-    expect("the moving disc, on frame 0",
-           panel_at_view(SCENE_MOVING_BAR_X, SCENE_MOVING_BAR_Y),
-           lvds_rgb888(lvds_palette_color(LVDS_COL_GREEN)));
+    {
+        int dx, dy, dr;
+        scene_disc_rect(0, &dx, &dy, &dr);
+        expect("the disc, at t = 0", panel_at_view(dx, dy),
+               lvds_rgb888(lvds_palette_color(LVDS_COL_GREEN)));
+    }
 
     /* The live palette: switch a bank and draw again. The colours the scene
        asks for by name are the bank's, and the ones the bank does not touch
@@ -66,9 +69,13 @@ int main(int argc, char **argv)
     scene_palette_switch(1);
     scene_draw(0);
     lvds_canvas_present();
-    expect("the switch, in the colour the palette reports",
-           panel_at_view(SCENE_MOVING_BAR_X, SCENE_MOVING_BAR_Y),
-           lvds_rgb888(lvds_palette_color(LVDS_COL_GREEN)));
+    {
+        int dx, dy, dr;
+        scene_disc_rect(0, &dx, &dy, &dr);
+        expect("the switch, in the colour the palette reports",
+               panel_at_view(dx, dy),
+               lvds_rgb888(lvds_palette_color(LVDS_COL_GREEN)));
+    }
     {
         int sx, sy, sw, sh;
         scene_swatch_rect(0, &sx, &sy, &sw, &sh);

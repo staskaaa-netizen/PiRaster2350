@@ -42,17 +42,19 @@ int main(int argc, char **argv)
            host_panel_width(), host_panel_height());
 
     for (int frame = 0; frame < frames; frame++) {
-        /* A bank a frame: the picture is drawn with a different palette every
-           time round, which is the switch doing its work. */
-        scene_palette_switch(frame);
-        scene_draw(frame);
+        /* The scene is drawn from a moment in time, so a frame here is a
+           hundred milliseconds later than the last one. */
+        uint32_t now_ms = (uint32_t)frame * 100u;
+
+        scene_palette_switch(scene_palette_phase(now_ms));
+        scene_draw(now_ms);
         lvds_canvas_present();
         if (!host_panel_write_bmp(path, true)) {
             fprintf(stderr, "host_loop: cannot write %s\n", path);
             return 1;
         }
-        printf("host_loop: frame %d, palette %d, written to %s\n", frame,
-               frame % SCENE_PALETTE_PHASES, path);
+        printf("host_loop: frame %d (t %lu ms), palette %d, written to %s\n",
+               frame, (unsigned long)now_ms, scene_palette_phase(now_ms), path);
     }
     printf("host_loop: %u present(s)\n", host_panel_presents());
     return 0;

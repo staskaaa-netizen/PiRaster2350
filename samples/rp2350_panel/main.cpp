@@ -28,8 +28,6 @@
 #define LVDS_SAMPLE_FPS 0
 #endif
 
-#define SCENE_STEP_MS 125      /* the moving disc: eight steps a second */
-#define SCENE_PALETTE_MS 3000  /* a palette bank every three seconds */
 #define FRAME_MS 20            /* the loop's own pace, ~50 frames a second */
 
 static uint32_t g_next_frame_ms;
@@ -120,11 +118,13 @@ void loop(void)
     g_next_frame_ms = now + FRAME_MS;
 #endif
 
-    /* The palette bank changes with the clock too. The slots are re-coloured
-       in place, so the picture already on the glass changes with it, and the
-       redraw that follows is only the scene moving on. */
-    scene_palette_switch((int)(now / SCENE_PALETTE_MS));
-    scene_draw((int)(now / SCENE_STEP_MS));
+    /* The scene is a function of the clock, so it moves as often as the loop
+       manages to draw and no faster; the palette bank follows the clock too.
+       The slots are re-coloured in place, so the picture already on the glass
+       changes with the switch, and the redraw that follows is only the scene
+       moving on. */
+    scene_palette_switch(scene_palette_phase(now));
+    scene_draw(now);
 #if LVDS_SAMPLE_FPS
     fps_report();
 #endif
