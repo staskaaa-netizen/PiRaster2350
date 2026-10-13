@@ -76,6 +76,19 @@ because that is the stack the panel was brought up on; the UF2 lands in
 `.pio/build/rp2350_panel/firmware.uf2`. It prints four lines on the USB serial
 when it comes up and then draws the same scene in a `while` loop.
 
+`pio run -e rp2350_panel_fps -t upload` is the same sample with its **frame
+meter** in: the loop runs flat out and every sixty frames it prints the
+milliseconds a whole frame - clear, scene, present - takes. That is how the
+project answers "is this fast enough for a game", on the panel, rather than
+guessing from datasheets.
+
+Two meters, because the answer depends on where the draw buffer lives:
+`rp2350_panel_fps` draws into SRAM (the small, fast target), and
+`rp2350_panel_psram_fps` adds the PSRAM backbuffer the machine uses, so the
+print shows what the copy in `present()` costs. A serial terminal must assert
+DTR (`pio device monitor` does; a bare port read may not) or the board's output
+is dropped.
+
 The samples have no RTOS, no tasks, no callbacks and no state machines: draw,
 present, repeat. `samples/common/scene.c` is the whole demo, and it is the same
 file for the desk and for the glass.

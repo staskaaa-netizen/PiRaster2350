@@ -3,6 +3,10 @@
 
 #include "lvds_palette.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* One picture, drawn by every sample.
 
    This is where a reader should start: it uses nothing but the renderer's own
@@ -30,5 +34,9 @@ void scene_palette_switch(int phase);
 #define SCENE_BACKGROUND_COLOR LVDS_COL_BLACK
 #define SCENE_MOVING_BAR_X 40
 #define SCENE_MOVING_BAR_Y 380
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SCENE_H */
