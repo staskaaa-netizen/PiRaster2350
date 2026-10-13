@@ -735,6 +735,57 @@ void lvds_target_clear(lvds_color_t color)
     g_dirty = true;
 }
 
+/* A row of the caller's own pixels: indices, in panel coordinates. The
+   framebuffer keeps two pixels to a byte, so an odd left edge means reading and
+   writing the byte that holds it, and the rest is a pack and a walk. */
+void lvds_target_blit(int x, int y, int w, const uint8_t *indices)
+{
+    uint32_t row;
+    int i = 0;
+
+    if (!target_ready_for_draw() || !indices || w <= 0 ||
+        (unsigned)y >= (unsigned)LVDS_HEIGHT) {
+        return;
+    }
+    if (x < 0) {
+        i = -x;
+        w -= i;
+        x = 0;
+    }
+    if (x >= (int)LVDS_WIDTH || w <= 0) {
+        return;
+    }
+    if (x + w > (int)LVDS_WIDTH) {
+        w = (int)LVDS_WIDTH - x;
+    }
+    if (w <= 0) {
+        return;
+    }
+
+    row = (uint32_t)y * (LVDS_FRAME_WIDTH / 2u);
+    if (x & 1) {
+        uint32_t at = row + ((uint32_t)x >> 1);
+        g_draw_buffer[at] = (uint8_t)((g_draw_buffer[at] & 0x0fu) |
+                                      (uint8_t)((indices[i] & 0x0fu) << 4));
+        x++;
+        i++;
+        w--;
+    }
+    while (w >= 2) {
+        g_draw_buffer[row + ((uint32_t)x >> 1)] =
+            (uint8_t)(((indices[i] & 0x0fu) << 4) | (indices[i + 1] & 0x0fu));
+        x += 2;
+        i += 2;
+        w -= 2;
+    }
+    if (w == 1) {
+        uint32_t at = row + ((uint32_t)x >> 1);
+        g_draw_buffer[at] = (uint8_t)((g_draw_buffer[at] & 0xf0u) |
+                                      (indices[i] & 0x0fu));
+    }
+    g_dirty = true;
+}
+
 void lvds_target_fill_rect(int x, int y, int w, int h, lvds_color_t color)
 {
     int x2;

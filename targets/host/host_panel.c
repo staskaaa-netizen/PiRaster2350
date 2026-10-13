@@ -9,6 +9,10 @@
 
 static uint32_t *g_frame;
 static unsigned g_presents;
+/* What each palette slot means, so a blit of indices can be expanded. It is
+   filled by `lvds_target_slot_set()`; until then slot i is its own grey. */
+static uint32_t g_slot_rgb[16];
+static bool g_slot_known[16];
 
 bool lvds_target_init(void)
 {
@@ -75,16 +79,49 @@ lvds_color_t lvds_target_slot(uint16_t rgb565)
 
 void lvds_target_slot_set(lvds_color_t slot, uint16_t rgb565)
 {
-    /* Nothing to re-colour in place. A host frame is 32bpp, so a colour that
-       is redefined shows up the next time something is *drawn* with it - it
-       cannot change pixels that are already there the way the glass can. */
-    (void)slot;
-    (void)rgb565;
+    /* Nothing on the glass to re-colour in place - a host frame is 32bpp, so a
+       colour redefined shows up the next time something is *drawn* with it. But
+       the slot's meaning is remembered, because a blit of indices has to be
+       expanded into pixels. */
+    if (slot < 16) {
+        g_slot_rgb[slot] = lvds_rgb888(rgb565);
+        g_slot_known[slot] = true;
+    }
 }
 
 void lvds_target_palette_reset(void)
 {
-    /* Nothing to give back. */
+    /* Nothing to give back, but the remembered slot meanings go with it. */
+    memset(g_slot_known, 0, sizeof(g_slot_known));
+}
+
+/* A row of the caller's own pixels: indices, expanded through the remembered
+   slot table. A host frame is 32bpp with no palette of its own, so this is the
+   only path by which an index has a colour here. */
+void lvds_target_blit(int x, int y, int w, const uint8_t *indices)
+{
+    if (!g_frame || !indices || w <= 0 ||
+        (unsigned)y >= (unsigned)LVDS_HEIGHT) {
+        return;
+    }
+    if (x < 0) {
+        indices += -x;
+        w += x;
+        x = 0;
+    }
+    if (x >= (int)LVDS_WIDTH) {
+        return;
+    }
+    if (x + w > (int)LVDS_WIDTH) {
+        w = (int)LVDS_WIDTH - x;
+    }
+    for (int i = 0; i < w; i++) {
+        uint8_t index = (uint8_t)(indices[i] & 0x0fu);
+        uint32_t rgb = g_slot_known[index]
+                           ? g_slot_rgb[index]
+                           : (uint32_t)index * 0x111111u;  /* the greys, until told */
+        g_frame[(size_t)y * LVDS_WIDTH + (size_t)(x + i)] = rgb;
+    }
 }
 
 unsigned host_panel_presents(void)

@@ -24,6 +24,12 @@ extern "C" {
      - `lvds_target_fill_rect` writes an axis-aligned rectangle of the panel,
        already clipped to the glass.
      - `lvds_target_clear` fills the whole glass with one colour.
+     - `lvds_target_blit` takes a run of pixels the caller has already made:
+       indices, left to right, in panel coordinates, already clipped. It is what
+       a client that owns its own raster - an emulator, a picture pump, a game
+       with its own dirty-box logic - wants: one row at a time, with no
+       per-pixel call overhead. An indexed target packs two to a byte; a wide
+       target expands each index to its own pixel.
      - `lvds_target_present` makes the drawn picture the one the scanout reads.
        For a memory target that is bookkeeping; for the RP2350 it is the copy
        from the PSRAM draw buffer into the SRAM framebuffer, and it is
@@ -52,6 +58,7 @@ bool lvds_target_init(void);
 void lvds_target_pixel(int x, int y, lvds_color_t color);
 void lvds_target_fill_rect(int x, int y, int w, int h, lvds_color_t color);
 void lvds_target_clear(lvds_color_t color);
+void lvds_target_blit(int x, int y, int w, const uint8_t *indices);
 void lvds_target_present(void);
 lvds_color_t lvds_target_slot(uint16_t rgb565);
 void lvds_target_slot_set(lvds_color_t slot, uint16_t rgb565);
