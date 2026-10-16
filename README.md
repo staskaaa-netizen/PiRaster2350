@@ -160,8 +160,12 @@ turned, and `host_panel_write_bmp(path, true)` turns it back for you.
 
 **The firmware sample is a PlatformIO project** (`pio run -e rp2350_panel`),
 because that is the stack the panel was brought up on; the UF2 lands in
-`.pio/build/rp2350_panel/firmware.uf2`. It prints four lines on the USB serial
-when it comes up and then draws the same scene in a `while` loop.
+`.pio/build/rp2350_panel/firmware.uf2`. `samples/rp2350_panel/main.cpp` is
+Arduino style: `setup()` brings the panel up, and `loop()` draws the scene and
+presents it. The framework's own `main()` is `while (1) { loop(); }`, so the
+sample adds nothing to it but those calls. The loop paces itself with `millis()`
+(`FRAME_MS`, about 50 frames a second), and the drawing itself is a function of
+that clock, so the demo behaves the same on every build.
 
 `pio run -e rp2350_panel_fps -t upload` is the same sample with its **frame
 meter** in: the loop runs flat out and every sixty frames it prints the
@@ -176,12 +180,30 @@ for the fast, tearing comparison. A serial terminal must assert DTR
 (`pio device monitor` does; a bare port read may not) or the board's output is
 dropped.
 
+**The console is the USB serial port, 115200 8N1.** The port appears when the
+application runs, and on this bench the application does not run until RESET is
+pressed (below). `pio device list` shows its number, and the number can change
+between uploads.
+
+```console
+pio device list                        # find the port (USB VID:PID 2E8A:...)
+pio device monitor -p COM13 -b 115200  # read it
+```
+
+The framework drops CDC output until the host asserts DTR, and
+`pio device monitor` asserts it. A monitor that is opened after the board has
+started would therefore miss the boot lines, so `console_announce()` in the
+sample says the state again for each terminal that attaches. `lvds: draw buffer
+in psram` is the line to look for; `lvds: the panel did not come up` replaces it
+when the bring-up failed.
+
 **A build that prints checks that someone is listening.** The framework's
 `Serial` write has nothing to do when no host is attached, so the sample asks
 `Serial` (the connected flag) before writing, in both the frame meter and the
 port's log hook. What an unwatched write does to this board was *not*
 established: a meter build disappearing from the USB bus turned out to be the
-reset below, not the write.
+reset below, not the write. The announce line follows the same rule: it is
+written only while the connected flag is set.
 
 **Flashing on this board: press RESET after the upload.** `pio run -t upload`
 does its job - it resets the board into BOOTSEL, writes the image and verifies

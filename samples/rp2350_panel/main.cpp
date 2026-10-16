@@ -83,6 +83,33 @@ extern "C" void lvds_port_log(const char *fmt, ...)
     }
 }
 
+/* The state line, said once for each terminal that attaches.
+
+   `setup()` is usually too early for it: the framework drops CDC output until
+   the host asserts DTR, so a monitor that is opened after the board started
+   hears nothing at all. `loop()` therefore says the same thing again while the
+   flag is clear, and clears the flag when the terminal goes away - once for
+   each terminal, not once for each frame. */
+static bool g_console_said;
+
+static void console_announce(void)
+{
+    if (!Serial) {
+        return;
+    }
+    if (!lvds_canvas_ready()) {
+        Serial.println("lvds: the panel did not come up");
+    } else {
+        Serial.printf("lvds: draw buffer in %s",
+                      rp2350_panel_backbuffer_in_psram() ? "psram" : "sram");
+#if LVDS_SAMPLE_FPS
+        Serial.print(", frame meter on, 115200 8N1");
+#endif
+        Serial.println();
+    }
+    g_console_said = true;
+}
+
 void setup(void)
 {
     Serial.begin(115200);
@@ -93,20 +120,28 @@ void setup(void)
     if (!lvds_canvas_init()) {
         /* Nothing came up. An empty loop is an honest answer; a retry loop
            here would only hide which of the two did not start. */
-        Serial.println("lvds: the panel did not come up");
+        console_announce();
         return;
     }
-    Serial.printf("lvds: draw buffer in %s\n",
-                  rp2350_panel_backbuffer_in_psram() ? "psram" : "sram");
+    console_announce();
 }
 
 void loop(void)
 {
-    uint32_t now = millis();
+    uint32_t now;
+
+    /* A terminal that arrives after the boot lines were dropped still gets the
+       state of the board. */
+    if (!Serial) {
+        g_console_said = false;
+    } else if (!g_console_said) {
+        console_announce();
+    }
 
     if (!lvds_canvas_ready()) {
         return;
     }
+    now = millis();
 #if !LVDS_SAMPLE_FPS
     /* Paced by the clock, not by the frame count: a demo whose speed depends
        on how fast the loop happens to run is a different demo on every build.
