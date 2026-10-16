@@ -104,13 +104,61 @@ The root cause is still not known. The tail is containment, and it is written
 down as a feature of the panel support. **Do not shorten the frame.** The
 measurements are also in [../LIMITS.md](../LIMITS.md).
 
-### An upload that left the board with no port and no picture
+### The board that is off the bus
 
 The meter build disappeared from the USB bus. The first diagnosis was a blocked
-CDC write that took the device down. That diagnosis was wrong. On this bench, an
-upload leaves the application down until somebody presses **RESET**. The print
-guard stayed in the code, for its own reason: a write that nobody reads has
+CDC write that took the device down. That diagnosis was wrong, and the print
+guard stayed in the code for its own reason: a write that nobody reads has
 nothing to do.
+
+The record of 2026-10-17 is wider than "an upload leaves the application down":
+
+* **The state can be reached without an upload.** Before a flash attempt, the
+  machine had only its Bluetooth ports and only the `C:` volume. No RP2350
+  device was present at all.
+* **In that state, an upload cannot work.** The uploader waits for an `RPxxxx`
+  device in BOOTSEL mode and then reports:
+  `No accessible RP2040/RP2350 devices in BOOTSEL mode were found.`
+* **A terminal cannot talk to it either.** There is no CDC port to open.
+
+So the state is: no port, no drive, no BOOTSEL. The physical **RESET** button
+(or a replug) is what brings the board back, and the console announcement
+appears as soon as a terminal attaches after that.
+
+**Why no watchdog can cover this.** A firmware watchdog can only fire while the
+firmware runs. This state is reached before, or outside, the application: the
+ROM answers no BOOTSEL request, the application's USB device is not enumerated,
+and the upload tool cannot reach the application's own reset interface. A
+watchdog inside PiRaster cannot fire in that state, and a polling or recovery
+loop inside the renderer is the class of code that this project removes on sight
+(see the retired workarounds above).
+
+**A candidate cause, still to be measured.** The Arduino core links the SDK's
+double-reset feature (`-DLIB_PICO_BOOTSEL_VIA_DOUBLE_RESET=1` in the framework's
+`lib/platform_def.txt`), with the window widened to 350 ms in
+`cores/rp2040/sdkoverride/pico_bootsel_via_double_reset.c`. The constructor of
+that feature runs **before `main()`**: when a magic token is still in SRAM, the
+chip calls `reset_usb_boot()` and goes back to BOOTSEL. An upload performs two
+resets in a row - one to enter BOOTSEL, one to start the application - so the
+sequence is inside that window by design.
+
+The observation does not prove that cause: a chip in BOOTSEL should show the
+ROM's mass-storage drive, and no drive appeared. The test is one build flag
+away: shrink the window with `-D PICO_BOOTSEL_VIA_DOUBLE_RESET_TIMEOUT_MS=1`, or
+drop the feature, and then watch whether an upload brings the application up on
+its own.
+
+**What to do when the panel is dark and the port is missing**
+
+1. Look at the glass. A running application draws the scene. A blank panel with
+   no port means that the board is not running the firmware.
+2. Ask the machine for a port and for a volume. A COM port that is not a
+   Bluetooth port is the application (or BOOTSEL); an `RP2350` drive means that
+   the chip sits in the bootloader.
+3. Press **RESET**. The port and the picture come back. This is the recovery on
+   this bench.
+4. If there is still nothing, hold **BOOTSEL** and replug the board, then
+   flash.
 
 ## What is verified where
 

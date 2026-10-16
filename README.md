@@ -207,10 +207,13 @@ written only while the connected flag is set.
 
 **Flashing on this board: press RESET after the upload.** `pio run -t upload`
 does its job - it resets the board into BOOTSEL, writes the image and verifies
-it - but the tool's own reboot into the application does not bring it up here.
-The board sits with no port (and, as far as it was looked at, no picture) until
-the RESET button is pressed. That is the workflow on this bench, not a fault in
-the build.
+it - but the tool's own reboot into the application often does not bring it up
+here, and the board sits with no port until the RESET button is pressed. The
+board can also drop off the bus with no upload involved at all. The cause is not
+established; the measurements, the candidate cause and the recovery checklist
+are in [docs/torture-history.md](docs/torture-history.md). One thing is
+established: no watchdog inside the firmware can cover that state, because the
+firmware is not running in it.
 
 **The default is double buffered on purpose.** Drawing straight into the buffer
 the scanout is reading is several times faster, but the panel is looking at the
