@@ -133,20 +133,37 @@ watchdog inside PiRaster cannot fire in that state, and a polling or recovery
 loop inside the renderer is the class of code that this project removes on sight
 (see the retired workarounds above).
 
-**A candidate cause, still to be measured.** The Arduino core links the SDK's
-double-reset feature (`-DLIB_PICO_BOOTSEL_VIA_DOUBLE_RESET=1` in the framework's
-`lib/platform_def.txt`), with the window widened to 350 ms in
-`cores/rp2040/sdkoverride/pico_bootsel_via_double_reset.c`. The constructor of
-that feature runs **before `main()`**: when a magic token is still in SRAM, the
-chip calls `reset_usb_boot()` and goes back to BOOTSEL. An upload performs two
-resets in a row - one to enter BOOTSEL, one to start the application - so the
-sequence is inside that window by design.
+**The fault reproduces on demand.** Two flashes on 2026-10-17, each one started
+from a reachable board, put the chip off the bus the same way: the upload
+reports `SUCCESS`, and then there is no CDC port and no BOOTSEL drive for the 25
+seconds that were watched. A physical RESET brings the board back, and the
+console announcement appears as soon as a terminal attaches.
 
-The observation does not prove that cause: a chip in BOOTSEL should show the
-ROM's mass-storage drive, and no drive appeared. The test is one build flag
-away: shrink the window with `-D PICO_BOOTSEL_VIA_DOUBLE_RESET_TIMEOUT_MS=1`, or
-drop the feature, and then watch whether an upload brings the application up on
-its own.
+**A candidate cause, measured and refuted (2026-10-17).** The Arduino core links
+the SDK's double-reset feature (`-DLIB_PICO_BOOTSEL_VIA_DOUBLE_RESET=1` in the
+framework's `lib/platform_def.txt`), with the window widened to 350 ms in
+`cores/rp2040/sdkoverride/pico_bootsel_via_double_reset.c`. Its constructor runs
+**before `main()`**: when a magic token is still in SRAM, the chip calls
+`reset_usb_boot()` and goes back to BOOTSEL. An upload performs two resets in a
+row - one to enter BOOTSEL, one to start the application - so the sequence
+looked like a double tap.
+
+The test: the same sample built with `-D PICO_BOOTSEL_VIA_DOUBLE_RESET_TIMEOUT_MS=1`,
+which shrinks that window to one millisecond, flashed from BOOTSEL with no RESET
+press and watched for 25 seconds. Result: **the same silence** - no port, no
+drive, no console - exactly like the default build. The window is not the cause,
+and the environment that measured it is out of the tree again; the flag in this
+paragraph is the whole of the experiment if somebody wants to repeat it.
+
+**What is still not known, and the one check that answers it.** After a flash,
+the board is either (a) running the application with a USB device that the host
+never enumerated, or (b) not running the firmware at all. A host cannot tell
+those apart, because the interface that would answer is the one that is missing.
+The glass can tell them apart, and it is the one observation no script here can
+make: **a running application draws the scene.** If the panel shows the demo
+after an upload and the port is still missing, then the application runs and the
+USB enumeration is the fault; if the panel is blank, the chip is not running the
+firmware.
 
 **What to do when the panel is dark and the port is missing**
 
