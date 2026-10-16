@@ -19,6 +19,22 @@ It was extracted from
 code, the palette and the fonts are the same code; the hardware half stopped
 including `cnc.h` and calls four port hooks instead.
 
+## What it is good for
+
+This is not a modern display path. Sixteen colours in a 4bpp indexed
+framebuffer, drawn by the CPU, scanned out by the RP2350's HSTX and two DMA
+channels, at 800x600 on a single-channel LVDS panel - where the modern world
+went to DSI, eDP and HDMI panels with 16 to 24 bits per pixel and a hardware
+pipeline behind them. Nothing here plays video, and nothing here shows a
+photograph.
+
+What it is good at is the opposite job: a **simple, high-responsiveness HMI** -
+a machine's own operator screen, where the picture has to be stable and instant
+rather than rich, the UI is text and rectangles, the drawing happens on one core
+while the scanout happens on another, and every cost is a number that was
+measured instead of guessed. That trade, and the cases on either side of it, is
+[docs/when-to-use.md](docs/when-to-use.md).
+
 ## The boundaries
 
 ```
@@ -51,9 +67,18 @@ Two rules hold the split together:
   presents, and owns the palette. It never mentions the view, the turn, the
   palette's names or the drawing primitives.
 
-The full statement of who owns what is in [docs/boundaries.md](docs/boundaries.md).
-What the hardware limits are - and they are not negotiable - is in
-[LIMITS.md](LIMITS.md).
+The documents behind it:
+
+* [docs/architecture.md](docs/architecture.md) - what each layer does with a
+  frame, the scanout chain step by step, and the numbers it runs at;
+* [docs/boundaries.md](docs/boundaries.md) - who owns what, and why the split is
+  where it is;
+* [docs/when-to-use.md](docs/when-to-use.md) - what it is good for, what it is
+  not, and what to use instead for a modern panel;
+* [docs/torture-history.md](docs/torture-history.md) - the stress harness, the
+  retired workarounds, and the faults and measurements behind them;
+* [LIMITS.md](LIMITS.md) - the hardware limits a consumer has to know before
+  using it somewhere new, and what still needs the bench.
 
 The panel is drawn **upright by default**. A glass bolted turned a quarter -
 the machine's own mounting - is one build flag (`-DLVDS_PANEL_TURN=90`, see
