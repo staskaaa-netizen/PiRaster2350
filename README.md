@@ -1,10 +1,18 @@
-# lvds-renderer
+# PiRaster
 
-The RP2350/LVDS pixel backend that was written inside uCNC, on its own: panel
-timing and scanout, a 4bpp indexed framebuffer, a sixteen-colour palette, and
-the drawing primitives every screen is built from. It drives one panel - a
-**Sharp LQ121S1LG44**, 800x600, single-channel LVDS, mounted turned a quarter -
-and it has been on that panel and no other.
+**PiRaster** is the RP2350/LVDS pixel backend that was written inside uCNC, on
+its own: panel timing and scanout, a 4bpp indexed framebuffer, a sixteen-colour
+palette, and the drawing primitives every screen is built from. It drives one
+panel - a **Sharp LQ121S1LG44**, 800x600, single-channel LVDS, mounted turned a
+quarter - and it has been on that panel and no other. The repository is
+`PiRaster2350`, after the chip it drives.
+
+It **began as a fork of [PicoLVDS](https://github.com/ceteras/PicoLVDS)**, and
+then turned into something much different: what survives from that project is a
+handful of its ideas - the HSTX pacer LUT and the way a scanline is packed among
+them - while the scanout, the SRAM framebuffer and its palette, the drawing core,
+the fonts and the target seam underneath all of it are this project's own. Those
+ideas are PicoLVDS's, and the credit for them is that project's.
 
 It was extracted from
 `uCNC/src/modules/lvds_renderer` (see *Where this came from* below). The drawing
