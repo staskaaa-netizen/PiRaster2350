@@ -805,8 +805,13 @@ void lvds_target_blit(int x, int y, int w, const uint8_t *indices)
         w--;
     }
     while (w >= 2) {
+        /* Two pixels to a byte, and the **left** one is the low nibble: that is
+           the order `lvds_target_pixel` writes and the order the scanout's LUT
+           reads (`g_colour_lut[k][(next << 4) | first]`). Getting this the other
+           way round leaves wide bars perfect and turns one-pixel detail - text
+           above all - into a pair-swapped picture. */
         g_draw_buffer[row + ((uint32_t)x >> 1)] =
-            (uint8_t)(((indices[i] & 0x0fu) << 4) | (indices[i + 1] & 0x0fu));
+            (uint8_t)(((indices[i + 1] & 0x0fu) << 4) | (indices[i] & 0x0fu));
         x += 2;
         i += 2;
         w -= 2;
