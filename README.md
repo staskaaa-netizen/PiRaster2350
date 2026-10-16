@@ -145,6 +145,8 @@ The documents behind it:
   retired workarounds, and the faults and measurements behind them;
 * [LIMITS.md](LIMITS.md) - the hardware limits a consumer has to know before
   using it somewhere new, and what still needs the bench.
+* [hardware/](hardware/README.md) - the adapter: its schematic, the KiCad
+  project, the fabrication files, and the eight HSTX pins this build drives.
 
 The panel is drawn **upright by default**. A glass bolted turned a quarter -
 the machine's own mounting - is one build flag (`-DLVDS_PANEL_TURN=90`, see
@@ -155,6 +157,25 @@ runs (`lvds_palette_define()`): on the glass the slot it already holds is
 re-coloured in place, so everything drawn in that colour changes with it on the
 next scanline, with no redraw and no slot churn. `scene_palette_switch()` in the
 samples walks four banks to show it.
+
+## Hardware
+
+| what | this build |
+| --- | --- |
+| glass | Sharp LQ121S1LG44, 800x600, single-channel LVDS: three data pairs and one clock pair |
+| board | Waveshare RP2350-PiZero (`-D PICO_BOARD=\"waveshare_rp2350_pizero\"`) |
+| HSTX pairs | D0+ D0- D1+ D1- D2+ D2- CLK+ CLK- = GP12, GP13, GP14, GP15, GP16, GP17, GP18, GP19 |
+| carrier | the PicoLVDS LVDS adapter, carried in [hardware/](hardware/README.md) |
+
+**There is no LVDS transmitter chip.** The RP2350's HSTX serialiser drives the
+panel's four LVDS pairs from those eight pins, in the seven-phase packing that
+the pacer LUT produces. That is the idea PiRaster took from PicoLVDS, and it is
+the reason this display path is a header of numbers plus one target.
+
+The design of the adapter - schematic, KiCad project and fabrication package -
+lives in [hardware/](hardware/README.md), where the project this one came from
+keeps it. The eight pins are stated for the firmware in
+`panels/sharp_lq121s1lg44.h`, which is the only place the code reads them.
 
 ## Build and run
 
