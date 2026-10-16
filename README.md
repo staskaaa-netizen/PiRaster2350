@@ -19,21 +19,75 @@ It was extracted from
 code, the palette and the fonts are the same code; the hardware half stopped
 including `cnc.h` and calls four port hooks instead.
 
-## What it is good for
+## What you can do with it
 
-This is not a modern display path. Sixteen colours in a 4bpp indexed
-framebuffer, drawn by the CPU, scanned out by the RP2350's HSTX and two DMA
-channels, at 800x600 on a single-channel LVDS panel - where the modern world
-went to DSI, eDP and HDMI panels with 16 to 24 bits per pixel and a hardware
-pipeline behind them. Nothing here plays video, and nothing here shows a
-photograph.
+Use PiRaster for a **simple panel with a fast and stable picture**:
 
-What it is good at is the opposite job: a **simple, high-responsiveness HMI** -
-a machine's own operator screen, where the picture has to be stable and instant
-rather than rich, the UI is text and rectangles, the drawing happens on one core
-while the scanout happens on another, and every cost is a number that was
-measured instead of guessed. That trade, and the cases on either side of it, is
-[docs/when-to-use.md](docs/when-to-use.md).
+* an operator screen for a machine: text, lines, rectangles and filled
+  rectangles in sixteen colours;
+* a state that you show with a colour, because you can change a palette slot
+  while the picture runs;
+* a picture that a client makes itself - an emulator, a game, a picture pump -
+  because `lvds_target_blit()` takes one row of indices at a time;
+* the same picture on a desk, because the host target writes BMP frames and the
+  project checks the pixels.
+
+## What you cannot do with it
+
+PiRaster is not a modern display path. Read the limits before you start:
+
+* **Sixteen colours.** The frame uses 4 bits for each pixel. There is no
+  blending, no alpha, no anti-aliasing and no image scaling.
+* **No video and no photographs.** The path has no decoder and no scaler.
+* **One panel and one board.** The geometry, the timing and the clocks are
+  compiled in for a Sharp LQ121S1LG44 on an RP2350.
+* **No compositor.** There are no layers and no rotation of arbitrary content.
+
+For a modern panel, use its own DSI, eDP or HDMI path.
+[docs/when-to-use.md](docs/when-to-use.md) gives the full comparison.
+
+## Features
+
+* **A stable picture.** The default build draws into a PSRAM backbuffer, then
+  copies the frame into the scanout buffer. The scanout never reads a
+  half-drawn picture.
+* **A live palette.** You can re-colour a slot while the picture runs. Everything
+  that already uses that colour changes on the next prepared line. You do not
+  redraw the screen, and you do not lose a slot.
+* **The turn in one place.** The build states the panel mounting one time, in
+  `core/lvds_view.h`. Text, lines, rectangles and ellipses then turn with it.
+* **A blit call for a client raster.** A client that makes its own rows of
+  palette indices draws at row speed, not at pixel speed.
+* **A host target.** The same drawing code writes the same picture into a frame
+  in RAM, so you can check a layout without a board.
+* **Four spare active lines.** The frame carries 604 active lines, not 600. The
+  panel shows one line twice at the close of the active area. The four spare
+  lines give that repeated line its own place, away from the picture. This is a
+  feature of the panel support; the fault behind it is a known issue.
+* **Static realtime memory.** The scanout memory is static, aligned and in SRAM.
+  The scanout path has no allocator.
+
+## Known issues
+
+* **The panel repeats one line at the close of the active area.** The root cause
+  is not known. The four spare active lines hold the repeated line away from the
+  picture. **Do not shorten the frame.** The measurements are in
+  [LIMITS.md](LIMITS.md). The record is in
+  [docs/torture-history.md](docs/torture-history.md).
+* **One clock point gives no video.** `420000 / div 3` produces no picture. This
+  is a limit of this board. It is not a requirement of the panel.
+* **A full redraw costs 33 ms** in the default (double buffered) build. The
+  single buffered build costs 3 ms, but the picture tears.
+* **The host samples do not run on this bench machine.** Its MinGW gcc cannot
+  run its own cc1. The samples compile, and `make run` runs them on a machine
+  with a working compiler.
+
+## License
+
+PiRaster is free software under the **GNU General Public License, version 3**
+(see [LICENSE](LICENSE)). PiRaster began as a fork of
+[PicoLVDS](https://github.com/ceteras/PicoLVDS). That project is also GPL-3.0,
+and the ideas that PiRaster keeps from it stay under the same license.
 
 ## The boundaries
 

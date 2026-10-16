@@ -25,23 +25,31 @@ in the module's own notes (`uCNC/src/modules/lvds_renderer/README.md`).
   same quarter the other way. A picture that comes out the wrong way up is that
   one number.
 
-## The frame carries 604 active lines against a 600-line glass
+## The feature: four spare active lines, for a fault that is open
 
-**The four spare active lines at the close are load-bearing.** The bench put
-five known colours on the frame's last five lines and one of them came out
-**twice**: the close of the active area repeats a line, whatever content is on
-it (2026-10-04). Four extra *blanking* lines changed nothing, so it is not the
-frame's total, and it is not the clock.
+The frame sends **604 active lines** to a 600-line glass. The four spare lines
+are necessary, and they are part of the panel support.
 
-Walking the active height down measured what is needed: **600** puts the repeat
-on the picture, **602** shows an extra black line, **603** and **604** are
-clean. The frame therefore keeps 604 - one line of margin over the three that
-are needed - while the view, and every drawing, stays the glass's own 600x800
-mapped onto the *first* 600 active lines.
+* **The feature.** The panel repeats one line at the close of the active area.
+  The four spare lines give that repeated line its own place, away from the
+  picture. The view, and every drawing, stays the glass's own 600x800 on the
+  *first* 600 active lines.
+* **The known issue.** The root cause is not known. The panel or the link
+  repeats or eats a line at the close of the active area, whatever the content
+  is. The tail contains the fault. It does not explain the fault.
 
-The **root cause is still unknown**: the panel or the link repeats or eats a
-line at the close of the active area. The tail absorbs it. Do not shorten the
-frame, and do not treat the number as tunable.
+**Do not shorten the frame. Do not treat the number as tunable.**
+
+The measurements (bench, 2026-10-04):
+
+* Four extra *blanking* lines changed nothing on the glass. The frame total and
+  the clock are therefore not the cause.
+* The bench walked the active height down. **600** lines put the repeat on the
+  picture, **602** lines showed one extra black line, and **603** and **604**
+  lines were clean. The frame keeps 604, which is one line of margin over the
+  three that are necessary.
+* The record of the probes is in
+  [docs/torture-history.md](docs/torture-history.md).
 
 ## Sixteen colours, and no blending
 
