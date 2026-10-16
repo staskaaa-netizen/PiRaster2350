@@ -38,7 +38,7 @@ Guarantees it does *not* give:
 
 ## `core/lvds_target.h` - the seam
 
-Seven calls. They were chosen so that the smallest interesting target is a few
+Nine calls. They were chosen so that the smallest interesting target is a few
 dozen lines (see `targets/host/host_panel.c`) and the biggest one
 (`targets/rp2350/rp2350_panel.c`) still does not know what a view is:
 
@@ -47,6 +47,7 @@ dozen lines (see `targets/host/host_panel.c`) and the biggest one
 | `lvds_target_init` | the board | a place to retry or recover |
 | `lvds_target_pixel` / `_fill_rect` | the framebuffer | anything with clipping to do |
 | `lvds_target_clear` | the framebuffer | a loop over pixels |
+| `lvds_target_blit` | the framebuffer | a place where a picture the caller already indexed is quantised again |
 | `lvds_target_present` | the scanout | a queue, a thread or a DMA path |
 | `lvds_target_slot` | the palette | a colour-quantiser above the target |
 | `lvds_target_slot_set` | the palette | a new slot taken for a colour that has one |
