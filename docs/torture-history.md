@@ -165,6 +165,27 @@ after an upload and the port is still missing, then the application runs and the
 USB enumeration is the fault; if the panel is blank, the chip is not running the
 firmware.
 
+**The operator's finding (bench, 2026-10-17): the USB port decides.** With the
+cable in the host's own USB port, the board does not start before the RESET
+button is pressed. With the cable in another USB source, it starts every time.
+
+That moves the fault out of the firmware's boot: the same image, the same flash,
+and a different USB source starts it. What fails is the interaction between this
+board and this host port, around the flashing session - the point at which this
+host has just finished with the BOOTSEL device and the application attaches as a
+new one.
+
+Two details are open, and both are bench questions:
+
+- When it "starts" on the other USB source, does that mean the picture on the
+  glass, the serial port, or both?
+- On the host port, is a cable replug into the *same* port enough, or does only
+  the RESET button bring it up?
+
+The first answer also answers the question above it: a picture with no port means
+that the application runs and the enumeration is the fault; a blank glass means
+that the firmware is not running.
+
 **What to do when the panel is dark and the port is missing**
 
 1. Look at the glass. A running application draws the scene. A blank panel with
