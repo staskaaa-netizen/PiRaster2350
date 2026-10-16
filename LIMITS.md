@@ -65,6 +65,18 @@ frame, and do not treat the number as tunable.
   32bpp, so what it shows is the ideal picture, not the 4bpp one. A colour
   outside the palette differs between the screen and the glass, by design.
 
+## The scanout's two DMA channels
+
+* The scanout's **data and control channels come from the DMA allocator**
+  (`lvds_target_init`, on core0, before core1 starts), never from fixed
+  numbers. A client with DMA of its own - a USB stack, PSRAM, an audio path -
+  can already hold 10 and 11 by the time the panel comes up, and a fixed pair
+  then either clobbers that driver's transfers or loses the scanout its own.
+  Nothing claims or releases them again afterwards.
+* If the allocator has no free channel, `lvds_target_init` **fails** rather
+  than running a partial scanout. A client that uses most of the board's
+  channels has to leave two for the panel.
+
 ## Realtime memory
 
 * Scanout memory is **static, aligned and in SRAM**: the framebuffer, the core1

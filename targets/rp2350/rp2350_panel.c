@@ -93,8 +93,14 @@
 #define LVDS_HSTX_COORD_GUARD 4096
 #define LVDS_HSTX_TEXT_GUARD 256
 
-#define LVDS_HSTX_DMACH_DATA 10
-#define LVDS_HSTX_DMACH_CTRL 11
+/* The scanout's two DMA channels are taken from the allocator, never fixed
+   numbers: a client's own DMA - a USB stack, PSRAM, an audio path - can hold
+   10 and 11 by the time the panel comes up, and a fixed pair then either
+   clobbers that driver's transfers or loses the scanout its own. They are
+   claimed on core0 in `lvds_target_init` before core1 starts; the core1 path
+   only reads them. */
+#define LVDS_HSTX_DMACH_DATA (g_dma_data_channel)
+#define LVDS_HSTX_DMACH_CTRL (g_dma_ctrl_channel)
 #define LVDS_HSTX_SYS_CLOCK_KHZ LVDS_SYS_CLOCK_KHZ
 #define LVDS_HSTX_ACTIVE_LINE_BUFFERS 4u
 
@@ -205,6 +211,12 @@ static lvds_hstx_palette_state_t g_hstx_palette LVDS_HSTX_SECTION_PALETTE;
 #define g_dirty (g_hstx_ctrl.dirty)
 #define g_core1_ready (g_hstx_core1.ready)
 #define g_descriptor_last_index (g_hstx_core1.descriptor_last_index)
+
+/* Claimed in `lvds_target_init`, on core0, before core1 is launched: the
+   scanout owns them for the life of the program, and nothing below claims or
+   releases them again. */
+static uint g_dma_data_channel;
+static uint g_dma_ctrl_channel;
 
 static void __no_inline_not_in_flash_func(core1_entry)(void);
 
@@ -508,6 +520,27 @@ static void __no_inline_not_in_flash_func(poll_dma_scanout)(void)
     }
 }
 
+/* Take the scanout's two channels from the allocator. A false return means the
+   board has no free channel for the panel, which is a configuration fault the
+   caller has to see: on a panel there is no partial scanout. */
+static bool lvds_claim_scanout_dma(void)
+{
+    int data = dma_claim_unused_channel(false);
+    int ctrl;
+
+    if (data < 0) {
+        return false;
+    }
+    ctrl = dma_claim_unused_channel(false);
+    if (ctrl < 0) {
+        dma_channel_unclaim((uint)data);
+        return false;
+    }
+    g_dma_data_channel = (uint)data;
+    g_dma_ctrl_channel = (uint)ctrl;
+    return true;
+}
+
 static void init_hstx(void)
 {
     const uint32_t data_bit = 1u << LVDS_HSTX_DMACH_DATA;
@@ -527,12 +560,8 @@ static void init_hstx(void)
     dma_hw->ints1 = scanout_bits;
     dma_hw->intr = scanout_bits;
 
-    if (!dma_channel_is_claimed(LVDS_HSTX_DMACH_DATA)) {
-        dma_channel_claim(LVDS_HSTX_DMACH_DATA);
-    }
-    if (!dma_channel_is_claimed(LVDS_HSTX_DMACH_CTRL)) {
-        dma_channel_claim(LVDS_HSTX_DMACH_CTRL);
-    }
+    /* Both channels were claimed on core0 by `lvds_claim_scanout_dma` before
+       this core was started; nothing here takes or releases a claim. */
 
     hstx_ctrl_hw->csr = 0;
     *((volatile uint32_t *)(0x40010000u + 0x58u)) = ((uint32_t)LVDS_HSTX_CLOCK_DIV << 16u);
@@ -673,6 +702,10 @@ static bool target_rect_sane(int x, int y, int w, int h)
 
 bool lvds_target_init(void)
 {
+    if (!lvds_claim_scanout_dma()) {
+        LVDS_PORT_LOG("lvds: no free DMA channel for the scanout\n");
+        return false;
+    }
 #if LVDS_TARGET_USE_PSRAM
     /* The PSRAM has to be up before the draw buffer can live in it, and the
        machine's order - PSRAM first, then the panel's clocks - is the one that
