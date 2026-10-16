@@ -40,6 +40,9 @@ An operator panel on a machine needs different properties:
 * **Low cost and easy supply.** An 800x600 LVDS panel and an RP2350 are cheap
   parts. The renderer is less than 3,000 lines and uses no third-party display
   stack.
+* **A large work area for the money.** The upright 800x600 view holds 133
+  columns by 75 rows of the small 6x8 face, 100 by 42 of the 8x14, and 50 by 21
+  of the doubled one. A panel of this class costs little.
 
 PiRaster is for a **simple HMI with a fast and stable picture**, on a panel that
 is already on the machine.
@@ -48,7 +51,11 @@ is already on the machine.
 
 * Draw an operator screen with a fixed layout: a header, panes, a status line
   and a key pad.
-* Draw text, lines, rectangles and filled rectangles.
+* Draw text where you need it. `lvds_draw_text(x, y, ...)` writes a string at
+  any view coordinate, in three sizes (6x8 condensed, 8x14 and 8x14 doubled) and
+  in any colour of the current palette, with its own background colour.
+* Draw lines, rectangles and filled rectangles - and let them move when the
+  screen calls for it. The sample scene animates a wave, a disc and a gauge.
 * Show a state with a colour. Call `lvds_palette_define()` to change a slot
   while the picture runs. Everything that uses that colour changes on the next
   prepared line. You do not redraw the screen.

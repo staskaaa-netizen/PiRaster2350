@@ -23,8 +23,20 @@ including `cnc.h` and calls four port hooks instead.
 
 Use PiRaster for a **simple panel with a fast and stable picture**:
 
+* **Text where you want it.** `lvds_draw_text(x, y, ...)` writes a string at any
+  view coordinate, in three sizes - 6x8 condensed, 8x14, and 8x14 doubled - and
+  in any colour of the current palette. Each glyph carries its own background
+  colour, because a glyph is filled rectangles. `lvds_draw_text_clip()` writes
+  the same text in a fixed number of columns, so the rows of a screen line up
+  without the caller measuring anything.
+* **A big, cheap screen.** 800x600 is a large work area for text and boxes, and
+  a panel of this class costs little. The upright view holds 133 columns by 75
+  rows of the 6x8 face, 100 by 42 of the 8x14, and 50 by 21 of the doubled one.
 * an operator screen for a machine: text, lines, rectangles and filled
   rectangles in sixteen colours;
+* **Motion when you want it.** Lines, rectangles and ellipses animate as well as
+  they draw. The sample scene moves a wave, a disc and a gauge from the clock.
+  The operator panel is the main job of this path, and motion is the extra.
 * a state that you show with a colour, because you can change a palette slot
   while the picture runs;
 * a picture that a client makes itself - an emulator, a game, a picture pump -
