@@ -258,27 +258,139 @@ The samples have no RTOS, no tasks, no callbacks and no state machines: draw,
 present, repeat. `samples/common/scene.c` is the whole demo, and it is the same
 file for the desk and for the glass.
 
+### Native packed-colour builds
+
+`rp2350_panel_4color` runs the original 800x600 PiRaster scene through the
+normal core1 and 7x256 LUT scanout, but packs four pixels into each framebuffer
+byte:
+
+```console
+pio run -e rp2350_panel_4color -t upload
+```
+
+All named scene colours map onto black, white, green and blue. The framebuffer
+is 120,800 B instead of 241,600 B, and the complete build uses 177,900 B of
+RAM with 345,320 B of heap left. The operator saw the native 800x600
+four-colour scene run stably on the glass.
+
+Core1 still produces the same seven-phase LVDS words. A 256-entry expansion
+table turns each packed 2bpp byte into four nibble indices before the existing
+colour LUT. This keeps the unpack work short enough for the scanline deadline.
+
+The green monochrome variant packs eight pixels per byte:
+
+```console
+pio run -e rp2350_panel_1bpp -t upload
+```
+
+It maps the scene onto black and one green foreground. The framebuffer is
+60,400 B and the complete build uses 117,996 B of RAM with 405,224 B of heap
+left. A 256-entry table expands each byte directly to all eight nibble indices.
+The operator saw the native 800x600 green scene on the glass after the board's
+usual post-upload reset.
+
+### CPU-less Command Expander bench
+
+The SRAM-resident line-stream probe works on the glass. It proves that the
+HSTX Command Expander can carry the existing raw LVDS words without core1
+preparing scanlines.
+
+```console
+pio run -e rp2350_panel_headless_sram_bars -t upload
+```
+
+The probe bakes three command streams in SRAM: one active colour-bar line, one
+blank line, and one VSYNC line. The DMA descriptor ring reuses them for the
+frame. The ring has 1,024 entries, so its 354 guard lines lengthen vertical
+blanking and lower refresh to about 37 Hz. This is a mechanism probe, not a
+panel-timing configuration.
+
+The same mechanism now carries a full-screen, four-colour source:
+
+```console
+pio run -e rp2350_panel_headless_200x120 -t upload
+```
+
+The source is **200x120**, stored in 12,000 B of SRAM. Every source row is
+expanded once through the palette and 7x256 LUT, then nearest-neighbour scaled
+4x horizontally and 5x vertically to fill 800x600. Each scaled row is stored as
+one complete 925-word scanline, so the 120 rows use 444,000 B. One HSTX-paced
+data channel and one descriptor channel loop the rows; core1 remains idle. The
+build uses 488,300 B of static RAM, leaving 33,576 B of heap.
+
+Core0 may redraw and rebuild the rows only after descriptor 669. The 354 guard
+lines plus the start of vertical blanking give about 9.3 ms, enough for the
+four-colour scene at 10 fps. Core1 remains idle. The operator saw the scene
+animate on the glass without tearing.
+
+The palette is part of the bake. A colour change does not reach a running
+headless stream; the picture must be baked again. The live palette is therefore
+lost in this mode.
+
+**`RAW_REPEAT` does not make an LVDS colour line tiny.** A constant-colour
+LVDS line still produces seven distinct 32-bit phase windows, and the command
+expander repeats one word sequentially. Reordering those seven phases into
+seven repeated runs would change the stream. The probe therefore uses complete
+`RAW` lines. `RAW_REPEAT` is only correct where a run really consists of
+consecutive equal raw words.
+
+The full-frame PSRAM variant is retired:
+
+* its first colour-bar build produced no video;
+* a second build produced blinking, never a static frame;
+* the working SRAM probe isolates the failure to the PSRAM full-frame loop,
+  not the raw LVDS command words.
+
+The scene snapshot was therefore not attempted. The normal core1 path remains
+the only supported full-frame scanout. The rollback baseline is the uCNC NCC
+image:
+
+```console
+pio run -e RP2350-LEANCAM-LVDS-NCC -t upload
+```
+
 ## What has been verified, and what has not
 
 Verified here:
 
 * `pio run -e rp2350_panel` builds the firmware sample and links it
   (RAM 56.8%, flash 0.4% of 16 MB, `firmware.uf2` generated).
+* The normal build is unchanged at RAM 298,156 B and flash 84,824 B after the
+  bake API was extracted from the same active-line routine.
+* The native four-colour 2bpp build links at RAM 177,900 B and flash 84,760 B.
+  The operator saw its 800x600 scene run stably.
+* The green 1bpp build links at RAM 117,996 B and flash 84,704 B. The operator
+  saw its native 800x600 scene on the glass.
+* `rp2350_panel_headless_sram_bars` builds and links at RAM 295,392 B and flash
+  70,384 B.
+* `rp2350_panel_headless_200x120` builds and links at RAM 488,300 B and flash
+  82,992 B.
+* The headless ELF has no `core1_entry` or `poll_dma_scanout` symbol.
+* The operator saw the SRAM-resident colour bars on the panel with core1 idle.
+  This is hardware-verified: the raw Command Expander path and the SRAM line
+  reuse work.
+* The operator saw the 200x120 four-colour scene full-screen and animating on
+  the panel. This hardware-verifies the integer-scaled SRAM line mode and the
+  blank-window row rebuild.
 * The portable half - core, host target and both host samples - compiles
   warning-free under `-Wall -Wextra` with the toolchain's ARM compiler.
 
 Not verified here:
 
+* **The full-frame PSRAM scanout remains negative.** The 2,479,000-byte loop
+  produced no video, then blinking; it never produced a static frame. It stays
+  retired.
+* **The native-resolution scene comparison was not attempted.** The PSRAM
+  scene path failed, and a complete native-resolution scene does not fit the
+  SRAM-resident line mechanism. The 200x120 mode is a separate low-resolution
+  probe.
 * **The host samples have not been run on this machine.** Its MinGW `gcc` cannot
   run its own `cc1` (missing prerequisite DLLs), so any host build fails before
   compiling a line. `make run` is one command away on a machine whose compiler
   works; the check inside `host_snapshot` is what makes that run meaningful.
-* **Nothing has been on the glass from this project.** The panel has only ever
-  been driven by the uCNC build. The scanout code is byte-identical to the
-  module's, but the assembled project - its clocks, its PSRAM bring-up, the
-  removed boot helper - has not been flashed.
-* The frame-close tail, the clock points, panel readability: bench items, listed
-  in `LIMITS.md`.
+* The normal demo and the SRAM-resident bars have been on the glass. The
+  frame-close tail and the full list of clock points still need their own bench
+  checks, listed in `LIMITS.md`.
 
 ## Where this came from
 

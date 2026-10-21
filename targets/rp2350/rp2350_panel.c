@@ -8,7 +8,9 @@
 
    The realtime rules are in `LIMITS.md` and are not negotiable: static aligned
    buffers, no large automatic locals in the core1 path, no PSRAM scanout, no
-   DMA present, no health polling. */
+   DMA present, no health polling. The `LVDS_HEADLESS` bench experiment is a
+   separate probe made only of SRAM-resident baked lines; the full-frame PSRAM
+   version failed its bench and is not present. */
 
 #include "rp2350_port.h"
 
@@ -46,6 +48,26 @@
 #define LVDS_TARGET_USE_PSRAM 0
 #endif
 
+#ifndef LVDS_HEADLESS_LOWRES
+#define LVDS_HEADLESS_LOWRES 0
+#endif
+
+#ifndef LVDS_TARGET_BPP
+#define LVDS_TARGET_BPP 4
+#endif
+
+#if LVDS_TARGET_BPP != 1 && LVDS_TARGET_BPP != 2 && LVDS_TARGET_BPP != 4
+#error LVDS_TARGET_BPP must be 1, 2 or 4
+#endif
+
+#if LVDS_HEADLESS_LOWRES && LVDS_TARGET_BPP != 4
+#error The low-resolution bench currently requires its 4bpp source raster
+#endif
+
+#define LVDS_PIXELS_PER_BYTE (8 / LVDS_TARGET_BPP)
+#define LVDS_PALETTE_SLOTS (1u << LVDS_TARGET_BPP)
+#define LVDS_COLOUR_MASK (LVDS_PALETTE_SLOTS - 1u)
+
 #if LVDS_TARGET_USE_PSRAM
 #include "rp2350_psram.h"
 #endif
@@ -55,6 +77,15 @@
    panel's own. Nothing below hard-codes a panel number. */
 #define LVDS_FRAME_WIDTH LVDS_WIDTH
 #define LVDS_FRAME_HEIGHT LVDS_PANEL_ACTIVE_HEIGHT
+
+#if LVDS_HEADLESS_LOWRES
+#define LVDS_DRAW_WIDTH 200
+#define LVDS_DRAW_HEIGHT 120
+#else
+#define LVDS_DRAW_WIDTH LVDS_FRAME_WIDTH
+#define LVDS_DRAW_HEIGHT LVDS_FRAME_HEIGHT
+#endif
+#define LVDS_DRAW_STRIDE (LVDS_DRAW_WIDTH / LVDS_PIXELS_PER_BYTE)
 
 #define LVDS_HSTX_H_FRONT_PORCH LVDS_H_FRONT_PORCH
 #define LVDS_HSTX_H_SYNC_WIDTH LVDS_H_SYNC_WIDTH
@@ -82,8 +113,11 @@
 #define LVDS_HSTX_H_INACTIVE_TRANSFERS (7 * LVDS_HSTX_H_INACTIVE / 8)
 #define LVDS_HSTX_H_ACTIVE_TRANSFERS (7 * LVDS_FRAME_WIDTH / 8)
 #define LVDS_HSTX_LINE_TRANSFERS (LVDS_HSTX_H_INACTIVE_TRANSFERS + LVDS_HSTX_H_ACTIVE_TRANSFERS)
+#define LVDS_HSTX_PREFIX_WORDS (1u + LVDS_HSTX_H_INACTIVE_TRANSFERS)
+#define LVDS_HSTX_TAIL_WORDS (1u + LVDS_HSTX_H_ACTIVE_TRANSFERS)
 
-#define LVDS_FRAME_BYTES (LVDS_FRAME_WIDTH * LVDS_FRAME_HEIGHT / 2)
+#define LVDS_FRAME_BYTES \
+    (LVDS_DRAW_WIDTH * LVDS_DRAW_HEIGHT / LVDS_PIXELS_PER_BYTE)
 #define LVDS_HSTX_CLOCK 0xC6000000u
 #define LVDS_HSTX_ACTIVE (LVDS_HSTX_CLOCK | 0x00E00000u)
 #define LVDS_HSTX_INACTIVE (LVDS_HSTX_CLOCK | 0x00600000u)
@@ -92,6 +126,27 @@
 #define LVDS_HSTX_INACTIVE_HSVS LVDS_HSTX_CLOCK
 #define LVDS_HSTX_COORD_GUARD 4096
 #define LVDS_HSTX_TEXT_GUARD 256
+
+#define LVDS_HSTX_CMD_RAW (0x0u << 12)
+#define LVDS_HSTX_CMD_RAW_REPEAT (0x1u << 12)
+#define LVDS_HSTX_CMD_NOP (0xfu << 12)
+
+#if LVDS_HEADLESS
+_Static_assert(RP2350_PANEL_LINE_TRANSFERS == LVDS_HSTX_LINE_TRANSFERS,
+               "bake count must match the core1 scanline");
+_Static_assert(RP2350_PANEL_LINE_TRANSFERS <= 0x0fffu,
+               "one RAW command must carry a whole LVDS line");
+#endif
+
+#if LVDS_HEADLESS_LOWRES
+_Static_assert(LVDS_DRAW_WIDTH * 4u == LVDS_WIDTH,
+               "200-pixel source must scale 4x to the panel");
+_Static_assert(LVDS_DRAW_HEIGHT * 5u == LVDS_HEIGHT,
+               "120-row source must scale 5x to the panel");
+_Static_assert(LVDS_HSTX_PREFIX_WORDS + LVDS_HSTX_TAIL_WORDS ==
+               LVDS_HSTX_LINE_TRANSFERS + 2u,
+               "prefix and tail must preserve one complete scanline");
+#endif
 
 /* The scanout's two DMA channels are taken from the allocator, never fixed
    numbers: a client's own DMA - a USB stack, PSRAM, an audio path - can hold
@@ -160,6 +215,16 @@ typedef struct {
     uint32_t data[LVDS_HSTX_DESCRIPTOR_RING_LINES];
 } lvds_hstx_dma_ring_block_t;
 
+#if LVDS_HEADLESS_LOWRES
+typedef struct {
+    uint32_t data[LVDS_DRAW_HEIGHT][RP2350_PANEL_BAKE_LINE_WORDS];
+} lvds_hstx_lowres_rows_block_t;
+
+typedef struct {
+    uint32_t data[RP2350_PANEL_BAKE_LINE_WORDS];
+} lvds_hstx_full_line_block_t;
+#endif
+
 typedef struct {
     uint32_t pad;
     uint32_t data[LVDS_HSTX_CORE1_STACK_WORDS];
@@ -202,6 +267,12 @@ static lvds_hstx_core1_state_t g_hstx_core1 LVDS_HSTX_SECTION_CTX = {
 };
 static lvds_hstx_palette_state_t g_hstx_palette LVDS_HSTX_SECTION_PALETTE;
 
+#if LVDS_TARGET_BPP == 1
+static uint32_t g_expand_1bpp[256] LVDS_HSTX_SECTION_PALETTE;
+#elif LVDS_TARGET_BPP == 2
+static uint16_t g_expand_2bpp[256] LVDS_HSTX_SECTION_PALETTE;
+#endif
+
 #define g_colour_lut (g_hstx_palette.colour_lut)
 #define g_palette_rgb565 (g_hstx_palette.rgb565)
 #define g_palette_used (g_hstx_palette.used)
@@ -217,6 +288,22 @@ static lvds_hstx_palette_state_t g_hstx_palette LVDS_HSTX_SECTION_PALETTE;
    releases them again. */
 static uint g_dma_data_channel;
 static uint g_dma_ctrl_channel;
+
+#if LVDS_HEADLESS_LOWRES
+static lvds_hstx_lowres_rows_block_t g_lowres_rows LVDS_HSTX_SECTION_LINES;
+static lvds_hstx_full_line_block_t g_lowres_blank LVDS_HSTX_SECTION_LINES;
+static lvds_hstx_full_line_block_t g_lowres_vs LVDS_HSTX_SECTION_LINES;
+#endif
+
+#if LVDS_HEADLESS && LVDS_HEADLESS_SRAM_BARS
+typedef struct {
+    uint32_t data[RP2350_PANEL_BAKE_LINE_WORDS];
+} lvds_hstx_baked_line_block_t;
+
+static lvds_hstx_baked_line_block_t g_headless_active_sram LVDS_HSTX_SECTION_LINES;
+static lvds_hstx_baked_line_block_t g_headless_blank_sram LVDS_HSTX_SECTION_LINES;
+static lvds_hstx_baked_line_block_t g_headless_vsync_sram LVDS_HSTX_SECTION_LINES;
+#endif
 
 static void __no_inline_not_in_flash_func(core1_entry)(void);
 
@@ -248,8 +335,8 @@ static uint32_t lvds_colour_from_rgb565(uint16_t rgb565)
 
 static void lvds_rebuild_lut(void)
 {
-    for (uint16_t i = 0; i < 16; i++) {
-        for (uint16_t j = 0; j < 16; j++) {
+    for (uint16_t i = 0; i < LVDS_PALETTE_SLOTS; i++) {
+        for (uint16_t j = 0; j < LVDS_PALETTE_SLOTS; j++) {
             uint16_t colours = (uint16_t)((j << 4) | i);
             uint32_t first_pixel = lvds_colour_from_rgb565(g_palette_rgb565[i]);
             uint32_t next_pixel = lvds_colour_from_rgb565(g_palette_rgb565[j]);
@@ -266,7 +353,7 @@ static void lvds_rebuild_lut(void)
 
 static void palette_set(uint8_t index, uint16_t rgb565)
 {
-    if (index >= 16) {
+    if (index >= LVDS_PALETTE_SLOTS) {
         return;
     }
     g_palette_rgb565[index] = rgb565;
@@ -280,7 +367,7 @@ static void palette_reset(void)
         0x0000, 0xffff, 0xf800, 0x07e0, 0x001f, 0xffe0, 0xf81f, 0x07ff,
         0x8410, 0xc618, 0x4208, 0xfc00, 0x03e0, 0x0010, 0xfd20, 0x07ff
     };
-    for (uint8_t i = 0; i < 16; i++) {
+    for (uint8_t i = 0; i < LVDS_PALETTE_SLOTS; i++) {
         g_palette_rgb565[i] = defaults[i];
         g_palette_used[i] = false;
     }
@@ -289,6 +376,34 @@ static void palette_reset(void)
     lvds_palette_reset();
     lvds_rebuild_lut();
 }
+
+#if LVDS_TARGET_BPP == 1
+static void lvds_init_bit_expand(void)
+{
+    for (uint16_t value = 0; value < 256; value++) {
+        uint32_t expanded = 0;
+
+        for (uint8_t pixel = 0; pixel < 8; pixel++) {
+            expanded |= (uint32_t)((value >> pixel) & 1u) <<
+                        (pixel * 4u);
+        }
+        g_expand_1bpp[value] = expanded;
+    }
+}
+#elif LVDS_TARGET_BPP == 2
+static void lvds_init_bit_expand(void)
+{
+    for (uint16_t value = 0; value < 256; value++) {
+        uint16_t expanded = 0;
+
+        for (uint8_t pixel = 0; pixel < 4; pixel++) {
+            expanded |= (uint16_t)((value >> (pixel * 2u)) & 3u) <<
+                        (pixel * 4u);
+        }
+        g_expand_2bpp[value] = expanded;
+    }
+}
+#endif
 
 /* The palette taken again by a caller above the renderer - see
    `lvds_target.h`. A picture that brings its own colours hands them back
@@ -303,17 +418,17 @@ static lvds_color_t palette_lookup(uint16_t rgb565)
     uint32_t best_dist = 0xffffffffu;
     uint8_t best = 0;
 
-    for (uint8_t i = 0; i < 16; i++) {
+    for (uint8_t i = 0; i < LVDS_PALETTE_SLOTS; i++) {
         if (g_palette_used[i] && g_palette_rgb565[i] == rgb565) {
             return i;
         }
     }
-    if (g_palette_next < 16) {
+    if (g_palette_next < LVDS_PALETTE_SLOTS) {
         uint8_t index = g_palette_next++;
         palette_set(index, rgb565);
         return index;
     }
-    for (uint8_t i = 0; i < 16; i++) {
+    for (uint8_t i = 0; i < LVDS_PALETTE_SLOTS; i++) {
         int dr = (int)((g_palette_rgb565[i] >> 11) & 0x1f) - (int)((rgb565 >> 11) & 0x1f);
         int dg = (int)((g_palette_rgb565[i] >> 5) & 0x3f) - (int)((rgb565 >> 5) & 0x3f);
         int db = (int)(g_palette_rgb565[i] & 0x1f) - (int)(rgb565 & 0x1f);
@@ -365,28 +480,158 @@ static void init_lines(void)
     compute_line(LVDS_HSTX_INACTIVE_VS, g_inactive_line_vs, LVDS_HSTX_H_INACTIVE_TRANSFERS, LVDS_HSTX_LINE_TRANSFERS);
 }
 
-static inline void __attribute__((always_inline)) compute_active_line(uint16_t y, uint8_t buffer_index)
+static inline void __attribute__((always_inline))
+lvds_store_eight_pixels(uint32_t eight_pixels, uint32_t *line, uint16_t i)
 {
-    uint32_t base = (uint32_t)y * (LVDS_FRAME_WIDTH / 2);
+    line[i + 0] = g_colour_lut[0][eight_pixels & 0xffu];
+    eight_pixels >>= 4;
+    line[i + 1] = g_colour_lut[1][eight_pixels & 0xffu];
+    eight_pixels >>= 4;
+    line[i + 2] = g_colour_lut[2][eight_pixels & 0xffu];
+    eight_pixels >>= 4;
+    line[i + 3] = g_colour_lut[3][eight_pixels & 0xffu];
+    eight_pixels >>= 4;
+    line[i + 4] = g_colour_lut[4][eight_pixels & 0xffu];
+    eight_pixels >>= 4;
+    line[i + 5] = g_colour_lut[5][eight_pixels & 0xffu];
+    eight_pixels >>= 4;
+    line[i + 6] = g_colour_lut[6][eight_pixels & 0xffu];
+}
+
+static inline void __attribute__((always_inline))
+compute_active_line_to(uint16_t y, uint32_t *line)
+{
+    uint32_t base = (uint32_t)y * LVDS_DRAW_STRIDE;
     uint16_t offset = 0;
-    uint32_t *line = g_active_line[buffer_index % LVDS_HSTX_ACTIVE_LINE_BUFFERS];
     for (uint16_t i = LVDS_HSTX_H_INACTIVE_TRANSFERS; i < LVDS_HSTX_LINE_TRANSFERS; i += 7) {
+#if LVDS_TARGET_BPP == 1
+        const uint8_t *packed_byte = g_framebuffer + base + offset;
+        uint32_t eight_pixels = g_expand_1bpp[*packed_byte];
+        offset++;
+#elif LVDS_TARGET_BPP == 2
+        const uint8_t *packed_bytes = g_framebuffer + base + 2u * offset;
+        uint32_t eight_pixels =
+            (uint32_t)g_expand_2bpp[packed_bytes[0]] |
+            ((uint32_t)g_expand_2bpp[packed_bytes[1]] << 16);
+        offset++;
+#else
         uint32_t eight_pixels = *(const uint32_t *)(g_framebuffer + base + 4u * offset++);
-        line[i + 0] = g_colour_lut[0][eight_pixels & 0xffu];
-        eight_pixels >>= 4;
-        line[i + 1] = g_colour_lut[1][eight_pixels & 0xffu];
-        eight_pixels >>= 4;
-        line[i + 2] = g_colour_lut[2][eight_pixels & 0xffu];
-        eight_pixels >>= 4;
-        line[i + 3] = g_colour_lut[3][eight_pixels & 0xffu];
-        eight_pixels >>= 4;
-        line[i + 4] = g_colour_lut[4][eight_pixels & 0xffu];
-        eight_pixels >>= 4;
-        line[i + 5] = g_colour_lut[5][eight_pixels & 0xffu];
-        eight_pixels >>= 4;
-        line[i + 6] = g_colour_lut[6][eight_pixels & 0xffu];
+#endif
+        lvds_store_eight_pixels(eight_pixels, line, i);
     }
 }
+
+static inline void __attribute__((always_inline))
+compute_active_line(uint16_t y, uint8_t buffer_index)
+{
+    compute_active_line_to(y,
+                           g_active_line[buffer_index % LVDS_HSTX_ACTIVE_LINE_BUFFERS]);
+}
+
+#if LVDS_HEADLESS_LOWRES
+static uint32_t lvds_repeat_four_nibbles(uint8_t colour)
+{
+    colour &= 0x0fu;
+    return (uint32_t)colour * 0x00001111u;
+}
+
+static inline void __attribute__((always_inline))
+compute_lowres_active_line_to(uint16_t y, uint32_t *line)
+{
+    const uint8_t *row = g_framebuffer + (uint32_t)y * LVDS_DRAW_STRIDE;
+
+    for (uint16_t group = 0; group < (LVDS_DRAW_WIDTH / 2u); group++) {
+        uint8_t packed = row[group];
+        uint32_t left = lvds_repeat_four_nibbles(packed & 0x0fu);
+        uint32_t right = lvds_repeat_four_nibbles(packed >> 4);
+        lvds_store_eight_pixels(left | (right << 16), line,
+                                LVDS_HSTX_H_INACTIVE_TRANSFERS + group * 7u);
+    }
+}
+#endif
+
+#if LVDS_HEADLESS
+
+/* In steady state, the active-encoded line immediately before the active area
+   points at slot zero. Slot zero holds the last active row prepared into it:
+   four rows before the end of the 604-row frame. */
+#define LVDS_HSTX_CLOSE_ROW \
+    (LVDS_FRAME_HEIGHT - LVDS_HSTX_ACTIVE_LINE_BUFFERS)
+
+static bool lvds_range_overlaps_static_framebuffer(const void *dst, size_t bytes)
+{
+    uintptr_t start = (uintptr_t)dst;
+    uintptr_t end = start + bytes;
+    uintptr_t fb_start = (uintptr_t)g_framebuffer;
+    uintptr_t fb_end = fb_start + sizeof(g_framebuffer_block);
+
+    return start < fb_end && fb_start < end;
+}
+
+static void lvds_bake_active_row(uint16_t y, uint32_t *line)
+{
+    compute_line(LVDS_HSTX_INACTIVE, line, 0, LVDS_HSTX_H_FRONT_TRANSFERS);
+    compute_line(LVDS_HSTX_INACTIVE_HS, line,
+                 LVDS_HSTX_H_FRONT_TRANSFERS,
+                 LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS);
+    compute_line(LVDS_HSTX_INACTIVE, line,
+                 LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS,
+                 LVDS_HSTX_H_INACTIVE_TRANSFERS);
+    compute_active_line_to(y, line);
+}
+
+static void lvds_bake_inactive_row(bool vsync, uint32_t *line)
+{
+    uint32_t front = vsync ? LVDS_HSTX_INACTIVE_VS : LVDS_HSTX_INACTIVE;
+    uint32_t sync = vsync ? LVDS_HSTX_INACTIVE_HSVS : LVDS_HSTX_INACTIVE_HS;
+
+    compute_line(front, line, 0, LVDS_HSTX_H_FRONT_TRANSFERS);
+    compute_line(sync, line,
+                 LVDS_HSTX_H_FRONT_TRANSFERS,
+                 LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS);
+    compute_line(front, line,
+                 LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS,
+                 LVDS_HSTX_LINE_TRANSFERS);
+}
+
+static void lvds_bake_scanline(uint32_t v, uint32_t *out)
+{
+    uint32_t *line = out + 1;
+
+    out[0] = LVDS_HSTX_CMD_RAW | LVDS_HSTX_LINE_TRANSFERS;
+
+    if (v < LVDS_HSTX_V_FRONT_PORCH) {
+        lvds_bake_inactive_row(false, line);
+    } else if (v < LVDS_HSTX_V_FRONT_PORCH + LVDS_HSTX_V_SYNC_WIDTH) {
+        lvds_bake_inactive_row(true, line);
+    } else if (v < LVDS_HSTX_V_INACTIVE) {
+        if (v == LVDS_HSTX_V_INACTIVE - 1u) {
+            lvds_bake_active_row(LVDS_HSTX_CLOSE_ROW, line);
+        } else {
+            lvds_bake_inactive_row(false, line);
+        }
+    } else {
+        lvds_bake_active_row((uint16_t)(v - LVDS_HSTX_V_INACTIVE), line);
+    }
+}
+
+size_t rp2350_panel_bake_line(int y, uint8_t *dst)
+{
+    uint32_t *out;
+
+    if (!dst || ((uintptr_t)dst & 3u) ||
+        (unsigned)y >= (unsigned)LVDS_FRAME_HEIGHT ||
+        lvds_range_overlaps_static_framebuffer(dst,
+                                               RP2350_PANEL_BAKE_LINE_BYTES)) {
+        return 0;
+    }
+    out = (uint32_t *)dst;
+    out[0] = LVDS_HSTX_CMD_RAW | LVDS_HSTX_LINE_TRANSFERS;
+    lvds_bake_active_row((uint16_t)y, out + 1);
+    return RP2350_PANEL_BAKE_LINE_BYTES;
+}
+
+#endif /* LVDS_HEADLESS */
 
 static void init_hstx(void);
 
@@ -521,24 +766,47 @@ static void __no_inline_not_in_flash_func(poll_dma_scanout)(void)
 }
 
 /* Take the scanout's two channels from the allocator. A false return means the
-   board has no free channel for the panel, which is a configuration fault the
-   caller has to see: on a panel there is no partial scanout. */
+   board has no complete scanout, which the caller has to see. */
 static bool lvds_claim_scanout_dma(void)
 {
-    int data = dma_claim_unused_channel(false);
-    int ctrl;
+    int channels[2];
+    const int count = 2;
 
-    if (data < 0) {
-        return false;
+    for (int i = 0; i < count; i++) {
+        channels[i] = dma_claim_unused_channel(false);
+        if (channels[i] < 0) {
+            while (i > 0) {
+                dma_channel_unclaim((uint)channels[--i]);
+            }
+            return false;
+        }
     }
-    ctrl = dma_claim_unused_channel(false);
-    if (ctrl < 0) {
-        dma_channel_unclaim((uint)data);
-        return false;
-    }
-    g_dma_data_channel = (uint)data;
-    g_dma_ctrl_channel = (uint)ctrl;
+    g_dma_data_channel = (uint)channels[0];
+    g_dma_ctrl_channel = (uint)channels[1];
     return true;
+}
+
+static void lvds_hstx_configure_pins(void)
+{
+    // Ascending LVDS pinout from the HAL config.
+    static const int lane_to_output_bit[4] = {0, 2, 4, 6};
+    static const uint8_t hstx_pins[8] = {
+        LVDS_HSTX_D0P, LVDS_HSTX_D0M,
+        LVDS_HSTX_D1P, LVDS_HSTX_D1M,
+        LVDS_HSTX_D2P, LVDS_HSTX_D2M,
+        LVDS_HSTX_CLKP, LVDS_HSTX_CLKM
+    };
+
+    for (uint lane = 0; lane < 4; lane++) {
+        int bit = lane_to_output_bit[lane];
+        uint32_t sel = (lane * 8 + 7) << HSTX_CTRL_BIT0_SEL_P_LSB |
+                       (lane * 8 + 6) << HSTX_CTRL_BIT0_SEL_N_LSB;
+        hstx_ctrl_hw->bit[bit] = sel;
+        hstx_ctrl_hw->bit[bit + 1] = sel | HSTX_CTRL_BIT0_INV_BITS;
+    }
+    for (uint i = 0; i < 8; i++) {
+        gpio_set_function(hstx_pins[i], 0);
+    }
 }
 
 static void init_hstx(void)
@@ -571,24 +839,7 @@ static void init_hstx(void)
         30u << HSTX_CTRL_CSR_SHIFT_LSB |
         HSTX_CTRL_CSR_EN_BITS;
 
-    // Ascending LVDS pinout from the HAL config.
-    static const int lane_to_output_bit[4] = {0, 2, 4, 6};
-    static const uint8_t hstx_pins[8] = {
-        LVDS_HSTX_D0P, LVDS_HSTX_D0M,
-        LVDS_HSTX_D1P, LVDS_HSTX_D1M,
-        LVDS_HSTX_D2P, LVDS_HSTX_D2M,
-        LVDS_HSTX_CLKP, LVDS_HSTX_CLKM
-    };
-    for (uint lane = 0; lane < 4; lane++) {
-        int bit = lane_to_output_bit[lane];
-        uint32_t sel = (lane * 8 + 7) << HSTX_CTRL_BIT0_SEL_P_LSB |
-                       (lane * 8 + 6) << HSTX_CTRL_BIT0_SEL_N_LSB;
-        hstx_ctrl_hw->bit[bit] = sel;
-        hstx_ctrl_hw->bit[bit + 1] = sel | HSTX_CTRL_BIT0_INV_BITS;
-    }
-    for (uint i = 0; i < 8; i++) {
-        gpio_set_function(hstx_pins[i], 0);
-    }
+    lvds_hstx_configure_pins();
 
     dma_channel_config c = dma_channel_get_default_config(LVDS_HSTX_DMACH_DATA);
     channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_CTRL);
@@ -622,6 +873,241 @@ static void init_hstx(void)
     dma_channel_start(LVDS_HSTX_DMACH_DATA);
 }
 
+#if LVDS_HEADLESS
+
+#if LVDS_HEADLESS_SRAM_BARS
+
+bool rp2350_panel_headless_sram_bars_start(void)
+{
+    const uint32_t data_bit = 1u << LVDS_HSTX_DMACH_DATA;
+    const uint32_t ctrl_bit = 1u << LVDS_HSTX_DMACH_CTRL;
+    const uint32_t scanout_bits = data_bit | ctrl_bit;
+    uint32_t *active = g_headless_active_sram.data;
+    uint32_t *blank = g_headless_blank_sram.data;
+    uint32_t *vsync = g_headless_vsync_sram.data;
+    dma_channel_config c;
+
+    if (g_display_started ||
+        !rp2350_panel_bake_line(0, (uint8_t *)active)) {
+        return false;
+    }
+    lvds_bake_scanline(0, blank);
+    lvds_bake_scanline(LVDS_HSTX_V_FRONT_PORCH, vsync);
+
+    for (uint32_t v = 0; v < LVDS_HSTX_DESCRIPTOR_RING_LINES; v++) {
+        const uint32_t *line = blank;
+
+        if (v < LVDS_HSTX_V_TOTAL) {
+            if ((v >= LVDS_HSTX_V_FRONT_PORCH) &&
+                (v < LVDS_HSTX_V_FRONT_PORCH + LVDS_HSTX_V_SYNC_WIDTH)) {
+                line = vsync;
+            } else if (v >= LVDS_HSTX_V_INACTIVE) {
+                line = active;
+            } else if (v == LVDS_HSTX_V_INACTIVE - 1u) {
+                line = active;
+            }
+        }
+        g_scanout_line_addr_ring[v] = (uint32_t)(uintptr_t)line;
+    }
+
+    irq_set_enabled(DMA_IRQ_1, false);
+    dma_channel_abort(LVDS_HSTX_DMACH_DATA);
+    dma_channel_abort(LVDS_HSTX_DMACH_CTRL);
+    dma_hw->inte1 &= ~scanout_bits;
+    dma_hw->ints1 = scanout_bits;
+    dma_hw->intr = scanout_bits;
+
+    hstx_ctrl_hw->csr = 0;
+    *((volatile uint32_t *)(0x40010000u + 0x58u)) =
+        ((uint32_t)LVDS_HSTX_CLOCK_DIV << 16u);
+    hstx_ctrl_hw->expand_shift =
+        1u << HSTX_CTRL_EXPAND_SHIFT_RAW_N_SHIFTS_LSB |
+        0u << HSTX_CTRL_EXPAND_SHIFT_RAW_SHIFT_LSB;
+    hstx_ctrl_hw->csr =
+        HSTX_CTRL_CSR_EXPAND_EN_BITS |
+        4u << HSTX_CTRL_CSR_CLKDIV_LSB |
+        4u << HSTX_CTRL_CSR_N_SHIFTS_LSB |
+        30u << HSTX_CTRL_CSR_SHIFT_LSB |
+        HSTX_CTRL_CSR_EN_BITS;
+    lvds_hstx_configure_pins();
+
+    c = dma_channel_get_default_config(LVDS_HSTX_DMACH_DATA);
+    channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_CTRL);
+    channel_config_set_dreq(&c, DREQ_HSTX);
+    channel_config_set_high_priority(&c, true);
+    dma_channel_configure(LVDS_HSTX_DMACH_DATA,
+                          &c,
+                          &hstx_fifo_hw->fifo,
+                          (const void *)(uintptr_t)g_scanout_line_addr_ring[0],
+                          RP2350_PANEL_BAKE_LINE_WORDS,
+                          false);
+
+    c = dma_channel_get_default_config(LVDS_HSTX_DMACH_CTRL);
+    channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_DATA);
+    channel_config_set_dreq(&c, DREQ_FORCE);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_ring(&c, false, 12);
+    dma_channel_configure(LVDS_HSTX_DMACH_CTRL,
+                          &c,
+                          &dma_hw->ch[LVDS_HSTX_DMACH_DATA].read_addr,
+                          &g_scanout_line_addr_ring[1],
+                          1,
+                          false);
+
+    dma_hw->ints1 = scanout_bits;
+    dma_hw->intr = scanout_bits;
+    bus_ctrl_hw->priority =
+        BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
+    __dmb();
+    dma_channel_start(LVDS_HSTX_DMACH_DATA);
+    g_display_started = true;
+    LVDS_PORT_LOG("lvds: SRAM bar lines looping, core1 idle\n");
+    return true;
+}
+
+#endif /* LVDS_HEADLESS_SRAM_BARS */
+
+#if LVDS_HEADLESS_LOWRES
+
+static void lvds_lowres_build_rows(void)
+{
+    for (uint32_t y = 0; y < LVDS_DRAW_HEIGHT; y++) {
+        uint32_t *stream = g_lowres_rows.data[y];
+        uint32_t *line = stream + 1;
+
+        stream[0] = LVDS_HSTX_CMD_RAW | LVDS_HSTX_LINE_TRANSFERS;
+        compute_line(LVDS_HSTX_INACTIVE, line, 0,
+                     LVDS_HSTX_H_FRONT_TRANSFERS);
+        compute_line(LVDS_HSTX_INACTIVE_HS, line,
+                     LVDS_HSTX_H_FRONT_TRANSFERS,
+                     LVDS_HSTX_H_FRONT_TRANSFERS +
+                     LVDS_HSTX_H_SYNC_TRANSFERS);
+        compute_line(LVDS_HSTX_INACTIVE, line,
+                     LVDS_HSTX_H_FRONT_TRANSFERS +
+                     LVDS_HSTX_H_SYNC_TRANSFERS,
+                     LVDS_HSTX_H_INACTIVE_TRANSFERS);
+        compute_lowres_active_line_to((uint16_t)y, line);
+    }
+}
+
+bool rp2350_panel_headless_lowres_can_rebake(void)
+{
+    uintptr_t base = (uintptr_t)g_scanout_line_addr_ring;
+    uintptr_t read;
+    uint32_t index;
+
+    if (!g_display_started) {
+        return false;
+    }
+    read = (uintptr_t)dma_hw->ch[LVDS_HSTX_DMACH_CTRL].read_addr;
+    index = (uint32_t)(((read - base) &
+                        (LVDS_HSTX_DESCRIPTOR_RING_LINES * sizeof(uint32_t) - 1u)) /
+                       sizeof(uint32_t));
+    return index >= LVDS_HSTX_V_TOTAL;
+}
+
+void rp2350_panel_headless_lowres_rebake(void)
+{
+    if (g_display_started) {
+        lvds_lowres_build_rows();
+        __dmb();
+    }
+}
+
+bool rp2350_panel_headless_lowres_start(void)
+{
+    const uint32_t data_bit = 1u << LVDS_HSTX_DMACH_DATA;
+    const uint32_t ctrl_bit = 1u << LVDS_HSTX_DMACH_CTRL;
+    const uint32_t scanout_bits = data_bit | ctrl_bit;
+    uint32_t *blank = g_lowres_blank.data;
+    uint32_t *vs_line = g_lowres_vs.data;
+    dma_channel_config c;
+
+    if (g_display_started) {
+        return false;
+    }
+
+    lvds_bake_scanline(0, blank);
+    lvds_bake_scanline(LVDS_HSTX_V_FRONT_PORCH, vs_line);
+    lvds_lowres_build_rows();
+
+    for (uint32_t v = 0; v < LVDS_HSTX_DESCRIPTOR_RING_LINES; v++) {
+        bool in_frame = v < LVDS_HSTX_V_TOTAL;
+        bool vsync = in_frame &&
+                     v >= LVDS_HSTX_V_FRONT_PORCH &&
+                     v < LVDS_HSTX_V_FRONT_PORCH + LVDS_HSTX_V_SYNC_WIDTH;
+        const uint32_t *line = vsync ? vs_line : blank;
+
+        if (in_frame && v >= LVDS_HSTX_V_INACTIVE) {
+            uint32_t y = v - LVDS_HSTX_V_INACTIVE;
+            if (y < LVDS_DRAW_HEIGHT * 5u) {
+                line = g_lowres_rows.data[y / 5u];
+            }
+        }
+        g_scanout_line_addr_ring[v] = (uint32_t)(uintptr_t)line;
+    }
+
+    irq_set_enabled(DMA_IRQ_1, false);
+    dma_channel_abort(LVDS_HSTX_DMACH_DATA);
+    dma_channel_abort(LVDS_HSTX_DMACH_CTRL);
+    dma_hw->inte1 &= ~scanout_bits;
+    dma_hw->ints1 = scanout_bits;
+    dma_hw->intr = scanout_bits;
+
+    hstx_ctrl_hw->csr = 0;
+    *((volatile uint32_t *)(0x40010000u + 0x58u)) =
+        ((uint32_t)LVDS_HSTX_CLOCK_DIV << 16u);
+    hstx_ctrl_hw->expand_shift =
+        1u << HSTX_CTRL_EXPAND_SHIFT_RAW_N_SHIFTS_LSB |
+        0u << HSTX_CTRL_EXPAND_SHIFT_RAW_SHIFT_LSB;
+    hstx_ctrl_hw->csr =
+        HSTX_CTRL_CSR_EXPAND_EN_BITS |
+        4u << HSTX_CTRL_CSR_CLKDIV_LSB |
+        4u << HSTX_CTRL_CSR_N_SHIFTS_LSB |
+        30u << HSTX_CTRL_CSR_SHIFT_LSB |
+        HSTX_CTRL_CSR_EN_BITS;
+    lvds_hstx_configure_pins();
+
+    c = dma_channel_get_default_config(LVDS_HSTX_DMACH_DATA);
+    channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_CTRL);
+    channel_config_set_dreq(&c, DREQ_HSTX);
+    channel_config_set_high_priority(&c, true);
+    dma_channel_configure(LVDS_HSTX_DMACH_DATA,
+                          &c,
+                          &hstx_fifo_hw->fifo,
+                          (const void *)(uintptr_t)g_scanout_line_addr_ring[0],
+                          RP2350_PANEL_BAKE_LINE_WORDS,
+                          false);
+
+    c = dma_channel_get_default_config(LVDS_HSTX_DMACH_CTRL);
+    channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_DATA);
+    channel_config_set_dreq(&c, DREQ_FORCE);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_ring(&c, false, 12);
+    dma_channel_configure(LVDS_HSTX_DMACH_CTRL,
+                          &c,
+                          &dma_hw->ch[LVDS_HSTX_DMACH_DATA].read_addr,
+                          &g_scanout_line_addr_ring[1],
+                          1,
+                          false);
+
+    dma_hw->ints1 = scanout_bits;
+    dma_hw->intr = scanout_bits;
+    bus_ctrl_hw->priority =
+        BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
+    __dmb();
+    dma_channel_start(LVDS_HSTX_DMACH_DATA);
+    g_display_started = true;
+    LVDS_PORT_LOG("lvds: 200x120 4-colour full-scale stream, core1 idle\n");
+    return true;
+}
+
+#endif /* LVDS_HEADLESS_LOWRES */
+
+#endif /* LVDS_HEADLESS */
+
 static void __no_inline_not_in_flash_func(core1_entry)(void)
 {
     init_hstx();
@@ -653,27 +1139,41 @@ static void configure_lvds_clocks(void)
 
 static bool target_ready_for_draw(void);
 
-/* One pixel of the glass. The core has already mapped the view onto the panel
-   and checked the bounds; the check here is the last defence for a target that
-   is called directly. The frame is `LVDS_PANEL_ACTIVE_HEIGHT` lines tall, but
-   only the glass's own `LVDS_HEIGHT` are ever drawn on: the tail belongs to
-   the scanout. */
+static inline void __attribute__((always_inline))
+lvds_framebuffer_store(uint8_t *row, int x, uint8_t colour)
+{
+    uint32_t byte = (uint32_t)x / LVDS_PIXELS_PER_BYTE;
+    uint32_t shift = ((uint32_t)x % LVDS_PIXELS_PER_BYTE) * LVDS_TARGET_BPP;
+    uint8_t mask = (uint8_t)(LVDS_COLOUR_MASK << shift);
+
+    row[byte] = (uint8_t)((row[byte] & (uint8_t)~mask) |
+                          (uint8_t)((colour & LVDS_COLOUR_MASK) << shift));
+}
+
+static uint8_t lvds_framebuffer_pack(uint8_t colour)
+{
+    uint8_t packed = 0;
+
+    colour &= LVDS_COLOUR_MASK;
+    for (uint8_t i = 0; i < LVDS_PIXELS_PER_BYTE; i++) {
+        packed |= (uint8_t)(colour << (i * LVDS_TARGET_BPP));
+    }
+    return packed;
+}
+
+/* One pixel of the source raster. In the normal build this is the panel; in
+   the low-resolution probe it is the 200x120 indexed source. */
 void lvds_target_pixel(int x, int y, lvds_color_t color)
 {
-    uint32_t p;
-    uint8_t c = (uint8_t)(color & 0x0f);
+    uint8_t c = (uint8_t)(color & LVDS_COLOUR_MASK);
 
     if (!target_ready_for_draw() ||
-        (unsigned)x >= (unsigned)LVDS_WIDTH ||
-        (unsigned)y >= (unsigned)LVDS_HEIGHT) {
+        (unsigned)x >= (unsigned)LVDS_DRAW_WIDTH ||
+        (unsigned)y >= (unsigned)LVDS_DRAW_HEIGHT) {
         return;
     }
-    p = (uint32_t)y * LVDS_FRAME_WIDTH + (uint32_t)x;
-    if (p & 1u) {
-        g_draw_buffer[p >> 1] = (uint8_t)((g_draw_buffer[p >> 1] & 0x0f) | (c << 4));
-    } else {
-        g_draw_buffer[p >> 1] = (uint8_t)((g_draw_buffer[p >> 1] & 0xf0) | c);
-    }
+    lvds_framebuffer_store(g_draw_buffer + (uint32_t)y * LVDS_DRAW_STRIDE,
+                           x, c);
     g_dirty = true;
 }
 
@@ -696,7 +1196,7 @@ static bool target_rect_sane(int x, int y, int w, int h)
         return false;
     /* This is the glass, not the view: the core has already turned the
        rectangle and clipped it to the panel. */
-    return x < LVDS_WIDTH && y < LVDS_HEIGHT &&
+    return x < LVDS_DRAW_WIDTH && y < LVDS_DRAW_HEIGHT &&
            x + w > 0 && y + h > 0;
 }
 
@@ -714,6 +1214,9 @@ bool lvds_target_init(void)
     (void)lvds_psram_init();
 #endif
     palette_reset();
+#if LVDS_TARGET_BPP == 1 || LVDS_TARGET_BPP == 2
+    lvds_init_bit_expand();
+#endif
     memset(g_framebuffer, 0, sizeof(g_framebuffer));
     g_draw_buffer = g_framebuffer;
     g_backbuffer_active = false;
@@ -725,17 +1228,22 @@ bool lvds_target_init(void)
         g_backbuffer_active = true;
     }
 #endif
+#if !LVDS_HEADLESS_LOWRES
     init_lines();
     for (uint8_t i = 0; i < LVDS_HSTX_ACTIVE_LINE_BUFFERS; i++) {
         compute_active_line(i, i);
     }
+#endif
     configure_lvds_clocks();
     g_core1_ready = false;
     multicore_reset_core1();
+#if !LVDS_HEADLESS
     lvds_hstx_launch_core1();
+#endif
     LVDS_PORT_LOG("lvds: panel %dx%d, frame %dx%d, turn %d\n",
                   LVDS_WIDTH, LVDS_HEIGHT, LVDS_FRAME_WIDTH, LVDS_FRAME_HEIGHT,
                   LVDS_PANEL_TURN);
+#if !LVDS_HEADLESS
 #if LVDS_HSTX_CORE1_READY_TIMEOUT_MS > 0
     {
         uint32_t start_ms = LVDS_PORT_MILLIS();
@@ -754,30 +1262,32 @@ bool lvds_target_init(void)
     g_display_started = true;
     LVDS_PORT_LOG("lvds: scanout up, draw buffer %s\n",
                   g_backbuffer_active ? "psram" : "sram");
+#else
+    LVDS_PORT_LOG("lvds: core1 idle, waiting for a baked frame\n");
+#endif
     lvds_target_clear(0);
     return true;
 }
 
 void lvds_target_clear(lvds_color_t color)
 {
-    uint8_t c = (uint8_t)(color & 0x0f);
+    uint8_t c = (uint8_t)(color & LVDS_COLOUR_MASK);
     if (!target_ready_for_draw()) {
         return;
     }
-    memset(g_draw_buffer, (int)((c << 4) | c), LVDS_FRAME_BYTES);
+    memset(g_draw_buffer, lvds_framebuffer_pack(c), LVDS_FRAME_BYTES);
     g_dirty = true;
 }
 
 /* A row of the caller's own pixels: indices, in panel coordinates. The
-   framebuffer keeps two pixels to a byte, so an odd left edge means reading and
-   writing the byte that holds it, and the rest is a pack and a walk. */
+   framebuffer packs 8 / LVDS_TARGET_BPP pixels per byte. */
 void lvds_target_blit(int x, int y, int w, const uint8_t *indices)
 {
     uint32_t row;
     int i = 0;
 
     if (!target_ready_for_draw() || !indices || w <= 0 ||
-        (unsigned)y >= (unsigned)LVDS_HEIGHT) {
+        (unsigned)y >= (unsigned)LVDS_DRAW_HEIGHT) {
         return;
     }
     if (x < 0) {
@@ -785,41 +1295,20 @@ void lvds_target_blit(int x, int y, int w, const uint8_t *indices)
         w -= i;
         x = 0;
     }
-    if (x >= (int)LVDS_WIDTH || w <= 0) {
+    if (x >= (int)LVDS_DRAW_WIDTH || w <= 0) {
         return;
     }
-    if (x + w > (int)LVDS_WIDTH) {
-        w = (int)LVDS_WIDTH - x;
+    if (x + w > (int)LVDS_DRAW_WIDTH) {
+        w = (int)LVDS_DRAW_WIDTH - x;
     }
     if (w <= 0) {
         return;
     }
 
-    row = (uint32_t)y * (LVDS_FRAME_WIDTH / 2u);
-    if (x & 1) {
-        uint32_t at = row + ((uint32_t)x >> 1);
-        g_draw_buffer[at] = (uint8_t)((g_draw_buffer[at] & 0x0fu) |
-                                      (uint8_t)((indices[i] & 0x0fu) << 4));
-        x++;
-        i++;
-        w--;
-    }
-    while (w >= 2) {
-        /* Two pixels to a byte, and the **left** one is the low nibble: that is
-           the order `lvds_target_pixel` writes and the order the scanout's LUT
-           reads (`g_colour_lut[k][(next << 4) | first]`). Getting this the other
-           way round leaves wide bars perfect and turns one-pixel detail - text
-           above all - into a pair-swapped picture. */
-        g_draw_buffer[row + ((uint32_t)x >> 1)] =
-            (uint8_t)(((indices[i + 1] & 0x0fu) << 4) | (indices[i] & 0x0fu));
-        x += 2;
-        i += 2;
-        w -= 2;
-    }
-    if (w == 1) {
-        uint32_t at = row + ((uint32_t)x >> 1);
-        g_draw_buffer[at] = (uint8_t)((g_draw_buffer[at] & 0xf0u) |
-                                      (indices[i] & 0x0fu));
+    row = (uint32_t)y * LVDS_DRAW_STRIDE;
+    for (int n = 0; n < w; n++) {
+        lvds_framebuffer_store(g_draw_buffer + row, x + n,
+                               (uint8_t)(indices[i + n] & LVDS_COLOUR_MASK));
     }
     g_dirty = true;
 }
@@ -828,8 +1317,8 @@ void lvds_target_fill_rect(int x, int y, int w, int h, lvds_color_t color)
 {
     int x2;
     int y2;
-    uint8_t c = (uint8_t)(color & 0x0f);
-    uint8_t packed = (uint8_t)((c << 4) | c);
+    uint8_t c = (uint8_t)(color & LVDS_COLOUR_MASK);
+    uint8_t packed = lvds_framebuffer_pack(c);
 
     if (!target_rect_sane(x, y, w, h)) {
         return;
@@ -841,29 +1330,28 @@ void lvds_target_fill_rect(int x, int y, int w, int h, lvds_color_t color)
     y2 = y + h;
     if (x < 0) x = 0;
     if (y < 0) y = 0;
-    if (x2 > LVDS_WIDTH) x2 = LVDS_WIDTH;
-    if (y2 > LVDS_HEIGHT) y2 = LVDS_HEIGHT;
+    if (x2 > LVDS_DRAW_WIDTH) x2 = LVDS_DRAW_WIDTH;
+    if (y2 > LVDS_DRAW_HEIGHT) y2 = LVDS_DRAW_HEIGHT;
     if (x >= x2 || y >= y2) return;
 
     for (int yy = y; yy < y2; yy++) {
-        uint32_t row = (uint32_t)yy * (LVDS_FRAME_WIDTH / 2);
+        uint8_t *row = g_draw_buffer + (uint32_t)yy * LVDS_DRAW_STRIDE;
         int left = x;
         int right = x2;
 
-        if (left & 1) {
-            uint32_t byte_index = row + ((uint32_t)left >> 1);
-            g_draw_buffer[byte_index] = (uint8_t)((g_draw_buffer[byte_index] & 0x0f) | (c << 4));
+        while (left < right && (left % LVDS_PIXELS_PER_BYTE) != 0) {
+            lvds_framebuffer_store(row, left, c);
             left++;
         }
 
-        if (right & 1) {
+        while (right > left && (right % LVDS_PIXELS_PER_BYTE) != 0) {
             right--;
-            uint32_t byte_index = row + ((uint32_t)right >> 1);
-            g_draw_buffer[byte_index] = (uint8_t)((g_draw_buffer[byte_index] & 0xf0) | c);
+            lvds_framebuffer_store(row, right, c);
         }
 
         if (left < right) {
-            memset(g_draw_buffer + row + ((uint32_t)left >> 1), packed, (size_t)(right - left) >> 1);
+            memset(row + left / LVDS_PIXELS_PER_BYTE, packed,
+                   (size_t)(right - left) / LVDS_PIXELS_PER_BYTE);
         }
     }
     g_dirty = true;
@@ -891,7 +1379,7 @@ lvds_color_t lvds_target_slot(uint16_t rgb565)
    This is what makes a palette switch instant and free of churn. */
 void lvds_target_slot_set(lvds_color_t slot, uint16_t rgb565)
 {
-    palette_set((uint8_t)(slot & 0x0f), rgb565);
+    palette_set((uint8_t)(slot & LVDS_COLOUR_MASK), rgb565);
 }
 
 bool rp2350_panel_backbuffer_in_psram(void)

@@ -78,7 +78,25 @@ the core1-up timeout, a delay for PSRAM bring-up, a log function with a weak
 no-op default, and a "do not spend time on a present now" hook (the machine's
 own reason is an SD card read). None of them is in the scanout path.
 
-## `samples/` - one picture, three programs
+The headless bake is still target-owned. `rp2350_panel_bake_line()` calls the
+same active-line expansion that core1 calls; it does not create a second
+encoder or move palette knowledge above the seam. The compile guard selects the
+SRAM-resident probe and freezes the palette into its three line streams. No
+core or sample code learns an HSTX opcode, channel number or descriptor layout.
+
+That path is not a second general-purpose backend. It can reuse a few static
+lines for a pattern probe, or expand a 200x120 four-colour source into 120
+SRAM-resident output rows and repeat them through DMA. There is no recovery
+state. The full-frame PSRAM version was measured as failure and stays retired;
+both working modes keep every scanout word in SRAM.
+
+Framebuffer packing is also target-owned. The core asks for an indexed colour;
+the target packs it at four bits per pixel for sixteen colours or two bits per
+pixel for four colours. The normal 2bpp path uses a target-local expansion
+table before the same 7x256 LUT, so the core does not learn about packing or
+scanline timing.
+
+## `samples/` - one picture, the sample programs
 
 `samples/common/scene.c` is the demo. Every sample draws it and does nothing
 else; that is the whole point of the layout, and it is why the samples are

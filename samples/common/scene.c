@@ -8,6 +8,14 @@
 
 #define SCENE_PI 3.14159265f
 
+#ifndef LVDS_SAMPLE_4COLOR
+#define LVDS_SAMPLE_4COLOR 0
+#endif
+
+#ifndef LVDS_SAMPLE_1COLOR
+#define LVDS_SAMPLE_1COLOR 0
+#endif
+
 /* The colours the swatches are drawn from, in palette order. */
 static const lvds_palette_color_id_t g_swatch[] = {
     LVDS_COL_GRAY_192, LVDS_COL_GRAY_128, LVDS_COL_GRAY_160,
@@ -66,6 +74,34 @@ void scene_palette_switch(int phase)
         lvds_palette_define(g_switch_ids[i],
                             lvds_rgb565(g_banks[p][i][0], g_banks[p][i][1],
                                         g_banks[p][i][2]));
+    }
+}
+
+void scene_palette_four_colours(void)
+{
+    static const uint8_t group[LVDS_COL_COUNT] = {
+        1, 1, 1, 1,       /* greys */
+        0, 1, 1, 1,       /* black, warm white, yellows */
+        1, 2, 1, 3,       /* red, green, white, blue */
+        1, 1, 2, 0        /* orange, bright red, bright green, tool tip */
+    };
+    static const uint16_t colours[4] = {
+        0x0000,
+        0xffff,
+        0x264c,
+        0x3298
+    };
+
+    for (int i = 0; i < LVDS_COL_COUNT; i++) {
+        lvds_palette_define((lvds_palette_color_id_t)i, colours[group[i]]);
+    }
+}
+
+void scene_palette_green_mono(void)
+{
+    for (int i = 0; i < LVDS_COL_COUNT; i++) {
+        lvds_palette_define((lvds_palette_color_id_t)i,
+                            i == LVDS_COL_BLACK ? 0x0000u : 0x264cu);
     }
 }
 
@@ -190,9 +226,19 @@ void scene_draw(uint32_t now_ms)
                    LVDS_FONT_SMALL);
     /* No floats in the text: this board's printf does not format them unless
        the linker is told to pull the formatter in. */
+#if LVDS_SAMPLE_1COLOR
+    snprintf(line, sizeof(line), "t %lu s   green mono   frame %lu ms",
+             (unsigned long)(now_ms / 1000u),
+             (unsigned long)(now_ms % 1000u));
+#elif LVDS_SAMPLE_4COLOR
+    snprintf(line, sizeof(line), "t %lu s   four colours   frame %lu ms",
+             (unsigned long)(now_ms / 1000u),
+             (unsigned long)(now_ms % 1000u));
+#else
     snprintf(line, sizeof(line), "t %lu s   palette %d   frame %lu ms",
              (unsigned long)(now_ms / 1000u), scene_palette_phase(now_ms),
              (unsigned long)(now_ms % 1000u));
+#endif
     lvds_draw_text(16, 48, line, ink, paper, LVDS_FONT_SMALL);
 
     draw_wave(now_ms, lvds_palette_color(LVDS_COL_BLUE));
@@ -215,5 +261,79 @@ void scene_draw(uint32_t now_ms)
         scene_swatch_rect((int)i, &x, &y, NULL, NULL);
         lvds_canvas_fill_rect(x, y, SCENE_SWATCH_W, SCENE_SWATCH_H,
                               lvds_palette_color(g_swatch[i]));
+    }
+}
+
+static int lowres_wave_y(int x, uint32_t now_ms)
+{
+    float phase = (float)(now_ms % SCENE_WAVE_MS) / (float)SCENE_WAVE_MS;
+    return 34 - (int)(8.0f * sinf((float)x * 0.06f -
+                                  phase * 2.0f * SCENE_PI));
+}
+
+void scene_draw_lowres(uint32_t now_ms)
+{
+    int w = lvds_canvas_width();
+    int h = lvds_canvas_height();
+    int prev_y;
+    lvds_color_t paper = lvds_palette_color(LVDS_COL_BLACK);
+    lvds_color_t ink = lvds_palette_color(LVDS_COL_WHITE_WARM);
+    lvds_color_t accent = lvds_palette_color(LVDS_COL_GREEN);
+    lvds_color_t data = lvds_palette_color(LVDS_COL_BLUE);
+
+    lvds_canvas_clear(paper);
+    lvds_draw_rect(0, 0, w, h, ink);
+    lvds_draw_text(4, 3, "PiRaster 200x120", ink, paper, LVDS_FONT_SMALL);
+    lvds_draw_text(4, 13, "4x/5x  four colours", ink, paper,
+                   LVDS_FONT_SMALL);
+
+    /* A moving wave and disc, using the same time functions as the full
+       scene even though the headless probe draws one frozen frame. */
+    prev_y = lowres_wave_y(4, now_ms);
+    for (int x = 6; x <= w - 4; x += 2) {
+        int y = lowres_wave_y(x, now_ms);
+        lvds_draw_line(x - 2, prev_y, x, y, data);
+        prev_y = y;
+    }
+    {
+        float t = (float)(now_ms % SCENE_SWEEP_MS) / (float)SCENE_SWEEP_MS;
+        float sweep = 0.5f - 0.5f * cosf(t * 2.0f * SCENE_PI);
+        int disc_x = 14 + (int)(sweep * (float)(w - 28));
+        int disc_y = lowres_wave_y(disc_x, now_ms);
+        lvds_draw_fill_ellipse(disc_x, disc_y, 4, 4, accent);
+    }
+
+    /* A small gauge and progress bar carry the full scene's visual identity */
+    {
+        int cx = w - 28;
+        int cy = 54;
+        float angle = (float)(now_ms % SCENE_NEEDLE_MS) *
+                      (2.0f * SCENE_PI / (float)SCENE_NEEDLE_MS);
+        lvds_draw_ellipse(cx, cy, 18, 18, ink);
+        lvds_draw_ellipse(cx, cy, 12, 12, ink);
+        lvds_draw_line(cx, cy,
+                       cx + (int)(10.0f * cosf(angle)),
+                       cy + (int)(10.0f * sinf(angle)), accent);
+    }
+    {
+        int x0 = 4;
+        int x1 = w - 4;
+        int y = 82;
+        float t = (float)(now_ms % SCENE_BAR_MS) / (float)SCENE_BAR_MS;
+
+        lvds_draw_rect(x0, y, x1 - x0, 9, ink);
+        lvds_canvas_fill_rect(x0 + 2, y + 2,
+                              (int)(t * (float)(x1 - x0 - 4)), 5, accent);
+    }
+
+    /* Four colours, shown in order. Black has an ink edge because it is the
+       background as well as a palette entry. */
+    {
+        lvds_draw_text(4, 101, "four colours", ink, paper, LVDS_FONT_SMALL);
+        lvds_draw_rect(88, 101, 9, 8, ink);
+        lvds_canvas_fill_rect(89, 102, 7, 6, paper);
+        lvds_canvas_fill_rect(101, 101, 9, 8, ink);
+        lvds_canvas_fill_rect(113, 101, 9, 8, accent);
+        lvds_canvas_fill_rect(125, 101, 9, 8, data);
     }
 }

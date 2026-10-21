@@ -47,6 +47,79 @@ build code at some time. All of them are gone.
 | Scratch X/Y placement tricks for live HSTX state | Scratch X/Y is not the place for permanent realtime state. The line buffers and the ring are static and aligned in the main SRAM. |
 | Renderer-owned generated G-code caches, and G-code generation inside the renderer | This broke the boundary. The renderer owns pixels, not programs. PiRaster has no knowledge of a program. |
 
+## The headless PSRAM experiment and the SRAM line-stream probe
+
+On 2026-10-21 the scanout was frozen for a mechanism test under
+`LVDS_HEADLESS`. Core0 drew once, the palette and 7x256 LUT expanded the frame,
+and core1 was not launched. The first version looped a complete 2,479,000-byte
+command stream from PSRAM.
+
+The full-frame PSRAM result is negative:
+
+1. `rp2350_panel_headless_bars` uploaded and verified, then produced no video.
+2. A second upload produced blinking, but never a static frame.
+3. The scene image was therefore not attempted.
+
+The next probe removed PSRAM from scanout entirely. It baked three complete
+line streams in SRAM:
+
+* one active colour-bar line;
+* one blank line;
+* one VSYNC line.
+
+The DMA descriptor ring reuses those lines with core1 idle. The ring has 1,024
+entries, so 354 guard entries lengthen vertical blanking and reduce refresh to
+about 37 Hz. That is acceptable for the mechanism test and unacceptable as a
+panel timing mode.
+
+**Result: the operator saw the SRAM-resident colour bars on the glass.** This
+proves that the raw LVDS words and the HSTX Command Expander path work. It also
+isolates the full-frame failure to PSRAM streaming, which stays retired.
+
+The next probe used the same SRAM transport for a full-screen 200x120 source.
+Four-colour indices stayed in a 12,000-byte source raster. Each row was
+expanded once at 4x horizontal scale, and the descriptor ring repeated all 120
+rows 5x vertically. A segmented DMA scanline showed a phase seam, so each row
+was changed to one complete 925-word command. The complete image then used
+488,300 B of static RAM with core1 idle.
+
+**Result: the operator saw the full-screen scene without a seam.** The 4x/5x
+integer scale did not require CPU expansion during scanout. The 1,024-line ring
+kept the same roughly 37 Hz probe refresh; normal 60 Hz timing is still not
+solved for this mode.
+
+Animation was added next. Core0 redraws and rebuilds the 120 rows only after
+descriptor 669, using the approximately 9.3 ms guard window. The operator saw
+the disc, wave, gauge and progress bar animate without tearing at 10 fps.
+
+The palette is frozen into the bake. A changed colour requires a new bake, and
+the live-palette feature is absent in this mode. `RAW_REPEAT` was not used to
+compress the active line: it repeats one 32-bit transfer, while a constant
+colour still needs seven distinct LVDS phase windows.
+
+The rollback baseline is the uCNC NCC image:
+
+```console
+pio run -e RP2350-LEANCAM-LVDS-NCC -t upload
+```
+
+## Native 2bpp line-preparation margin
+
+The native four-colour build stores four pixels per framebuffer byte and cuts
+the 800x604 framebuffer from 241,600 B to 120,800 B. The first implementation
+unpacked each byte to four nibble indices with an eight-iteration loop. The
+panel ran unstably even though the packed image was correct.
+
+The fix is a 256-entry byte-expansion table in static SRAM. Core1 now performs
+two lookups per eight pixels before the existing seven LUT reads. The operator
+then saw the native 800x600 scene run stably. The complete 2bpp build uses
+177,900 B RAM and 84,760 B flash.
+
+The 1bpp extension keeps eight pixels per byte and uses one expansion-table
+lookup per group. All named colours map to either black or one green
+foreground. The complete build uses 117,996 B RAM and 84,704 B flash; the
+operator saw the native scene after the board's usual post-upload reset.
+
 ## The faults behind those decisions
 
 Each fault below cost bench time, and each one is the reason for a line in the

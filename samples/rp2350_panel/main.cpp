@@ -28,9 +28,25 @@
 #define LVDS_SAMPLE_FPS 0
 #endif
 
+#ifndef LVDS_HEADLESS_SAMPLE
+#define LVDS_HEADLESS_SAMPLE 0
+#endif
+
+#ifndef LVDS_SAMPLE_4COLOR
+#define LVDS_SAMPLE_4COLOR 0
+#endif
+
+#ifndef LVDS_SAMPLE_1COLOR
+#define LVDS_SAMPLE_1COLOR 0
+#endif
+
 #define FRAME_MS 20            /* the loop's own pace, ~50 frames a second */
+#define LOWRES_FRAME_MS 100    /* the 37 Hz blank window can absorb 10 fps */
 
 static uint32_t g_next_frame_ms;
+#if LVDS_HEADLESS_LOWRES
+static uint32_t g_next_lowres_ms;
+#endif
 
 #if LVDS_SAMPLE_FPS
 #define FPS_FRAMES 60
@@ -102,27 +118,93 @@ static void console_announce(void)
     } else {
         Serial.printf("lvds: draw buffer in %s",
                       rp2350_panel_backbuffer_in_psram() ? "psram" : "sram");
+#if LVDS_HEADLESS_SAMPLE
+#if LVDS_HEADLESS_LOWRES
+        Serial.print(", 200x120 four-colour full-screen, core1 idle");
+#else
+        Serial.print(", headless SRAM line stream, core1 idle");
+#endif
+#endif
 #if LVDS_SAMPLE_FPS
         Serial.print(", frame meter on, 115200 8N1");
+#endif
+#if LVDS_SAMPLE_4COLOR
+        Serial.print(", native 800x600, four colours");
+#endif
+#if LVDS_SAMPLE_1COLOR
+        Serial.print(", native 800x600, green mono 1bpp");
 #endif
         Serial.println();
     }
     g_console_said = true;
 }
 
+#if LVDS_HEADLESS_SRAM_BARS
+static void draw_colour_bars(void)
+{
+    static const lvds_palette_color_id_t bars[] = {
+        LVDS_COL_WHITE, LVDS_COL_YELLOW, LVDS_COL_GREEN, LVDS_COL_BLUE,
+        LVDS_COL_RED, LVDS_COL_TOOL_ORANGE, LVDS_COL_GRAY_128, LVDS_COL_BLACK
+    };
+    int w = lvds_canvas_width();
+    int h = lvds_canvas_height();
+
+    for (unsigned i = 0; i < sizeof(bars) / sizeof(bars[0]); i++) {
+        int x0 = (int)((long)i * w / (long)(sizeof(bars) / sizeof(bars[0])));
+        int x1 = (int)((long)(i + 1u) * w /
+                       (long)(sizeof(bars) / sizeof(bars[0])));
+        lvds_canvas_fill_rect(x0, 0, x1 - x0, h,
+                              lvds_palette_color(bars[i]));
+    }
+}
+#endif
+
 void setup(void)
 {
     Serial.begin(115200);
 
-    /* One call brings the panel up: the PSRAM (when this build has it), the
-       HSTX pacer, core1, the descriptor ring. The drawing side knows none of
-       that. */
+    /* One call brings the target up: PSRAM, palette, clocks and either the
+       core1 descriptor path or, under `LVDS_HEADLESS`, nothing until a baked
+       frame is ready. */
     if (!lvds_canvas_init()) {
         /* Nothing came up. An empty loop is an honest answer; a retry loop
            here would only hide which of the two did not start. */
         console_announce();
         return;
     }
+#if LVDS_SAMPLE_4COLOR
+    scene_palette_four_colours();
+#endif
+#if LVDS_SAMPLE_1COLOR
+    scene_palette_green_mono();
+#endif
+
+#if LVDS_HEADLESS_SAMPLE
+#if LVDS_HEADLESS_LOWRES
+    scene_draw_lowres(1234u);
+    lvds_canvas_present();
+    if (!rp2350_panel_headless_lowres_start()) {
+        if (Serial) {
+            Serial.println("lvds: the 200x120 stream did not start");
+        }
+        return;
+    }
+    g_next_lowres_ms = millis();
+#elif LVDS_HEADLESS_SRAM_BARS
+    draw_colour_bars();
+    lvds_canvas_present();
+
+    if (!rp2350_panel_headless_sram_bars_start()) {
+        if (Serial) {
+            Serial.println("lvds: the SRAM bar stream did not start");
+        }
+        return;
+    }
+#else
+#error Headless mode needs a working source raster
+#endif
+#endif
+
     console_announce();
 }
 
@@ -141,6 +223,18 @@ void loop(void)
     if (!lvds_canvas_ready()) {
         return;
     }
+#if LVDS_HEADLESS_SAMPLE
+#if LVDS_HEADLESS_LOWRES
+    now = millis();
+    if ((int32_t)(now - g_next_lowres_ms) >= 0 &&
+        rp2350_panel_headless_lowres_can_rebake()) {
+        scene_draw_lowres(now);
+        rp2350_panel_headless_lowres_rebake();
+        g_next_lowres_ms = now + LOWRES_FRAME_MS;
+    }
+#endif
+    return;
+#endif
     now = millis();
 #if !LVDS_SAMPLE_FPS
     /* Paced by the clock, not by the frame count: a demo whose speed depends
@@ -158,7 +252,9 @@ void loop(void)
        The slots are re-coloured in place, so the picture already on the glass
        changes with the switch, and the redraw that follows is only the scene
        moving on. */
+#if !LVDS_SAMPLE_4COLOR && !LVDS_SAMPLE_1COLOR
     scene_palette_switch(scene_palette_phase(now));
+#endif
     scene_draw(now);
 #if LVDS_SAMPLE_FPS
     fps_report();

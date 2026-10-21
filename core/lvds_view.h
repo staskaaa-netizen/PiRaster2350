@@ -3,6 +3,10 @@
 
 #include "lvds_config.h"
 
+#ifndef LVDS_HEADLESS_LOWRES
+#define LVDS_HEADLESS_LOWRES 0
+#endif
+
 /* Where a *drawing* puts its pixels, and how that lands on the glass.
 
    The panel is 800x600, and the machine is built with it turned a quarter: the
@@ -20,7 +24,16 @@
    A picture that comes out upside down is this one number set to the wrong
    quarter. */
 
-#if LVDS_PANEL_TURN == 90
+#if LVDS_HEADLESS_LOWRES
+#define LVDS_VIEW_WIDTH 200
+#define LVDS_VIEW_HEIGHT 120
+#define LVDS_PANEL_X(vx, vy) (vx)
+#define LVDS_PANEL_Y(vx, vy) (vy)
+#define LVDS_PANEL_RECT_X(vx, vy, vw, vh) (vx)
+#define LVDS_PANEL_RECT_Y(vx, vy, vw, vh) (vy)
+#define LVDS_PANEL_RECT_W(vw, vh) (vw)
+#define LVDS_PANEL_RECT_H(vw, vh) (vh)
+#elif LVDS_PANEL_TURN == 90
 #define LVDS_VIEW_WIDTH LVDS_HEIGHT
 #define LVDS_VIEW_HEIGHT LVDS_WIDTH
 #define LVDS_PANEL_X(vx, vy) (vy)

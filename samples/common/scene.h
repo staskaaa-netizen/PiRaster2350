@@ -22,6 +22,11 @@ extern "C" {
 
 void scene_draw(uint32_t now_ms);
 
+/* A compact, four-colour scene for the 200x120 headless probe. It uses the
+   same canvas primitives and fonts; the transport scales the finished source
+   raster 4x horizontally and 5x vertically. */
+void scene_draw_lowres(uint32_t now_ms);
+
 /* Where swatch `index` (0..15) is drawn, in view coordinates. The layout
    follows the view, so the same scene sits well on an upright panel and on a
    turned one; a check asks for the same rectangle the scene drew. */
@@ -40,6 +45,8 @@ void scene_disc_rect(uint32_t now_ms, int *x, int *y, int *r);
 #define SCENE_PALETTE_MS 3000
 int scene_palette_phase(uint32_t now_ms);
 void scene_palette_switch(int phase);
+void scene_palette_four_colours(void);
+void scene_palette_green_mono(void);
 
 /* The colours a check wants to find. */
 #define SCENE_BORDER_COLOR LVDS_COL_GRAY_192

@@ -136,6 +136,82 @@ The measurements (bench, 2026-10-04):
 * The panel follows the active lines rather than counting from the sync: the
   porches in the panel header are measured values, not preferences.
 
+## Native packed-colour depths
+
+`LVDS_TARGET_BPP=2` is supported by the normal core1/LUT path. The framebuffer
+then holds four pixels per byte:
+
+* framebuffer, 800x604: **120,800 B**, down from 241,600 B at 4bpp;
+* complete native build: **177,900 B** RAM and **84,760 B** flash;
+* heap remaining: **345,320 B**;
+* the 2bpp build maps every scene colour onto four palette values;
+* the operator saw the native 800x600 scene run stably.
+
+Core1 converts two packed bytes into eight nibble indices before the existing
+7x256 LUT. That conversion uses a 256-entry expansion table. The first version
+used an eight-iteration loop per group and was unstable; the table restored the
+scanline timing margin. The default target remains 4bpp and sixteen colours.
+
+`LVDS_TARGET_BPP=1` reduces the same path to black and one green foreground.
+Eight pixels share each byte:
+
+* framebuffer, 800x604: **60,400 B**;
+* complete native build: **117,996 B** RAM and **84,704 B** flash;
+* heap remaining: **405,224 B**;
+* a 256-entry table expands one byte directly into eight nibble indices before
+  the same 7x256 LUT;
+* the operator saw the native 800x600 green scene after the board's usual
+  post-upload reset.
+
+## Headless Command Expander - SRAM only
+
+`LVDS_HEADLESS_SRAM_BARS` is the working CPU-less probe. It bakes one active
+colour-bar line, one blank line and one VSYNC line in SRAM, then reuses them
+through the DMA descriptor ring. Core1 is not launched.
+
+* One `RAW` command carries each complete 924-word scanline. The command
+  expander's 12-bit count holds the whole line.
+* The operator saw the colour bars on the panel with core1 idle. The raw LVDS
+  words and the SRAM line reuse therefore work on the glass.
+* The 1,024-entry descriptor ring adds 354 guard lines after the 670-line
+  timing sequence. Refresh is about 37 Hz. This is a mechanism probe, not a
+  panel-timing mode.
+* Palette changes invalidate the bake; live palette is not available.
+* `RAW_REPEAT` repeats one 32-bit word, not a scanline or a seven-word LVDS
+  phase sequence. It cannot reduce a constant-colour LVDS line to one repeated
+  word without changing the serial phase.
+
+`LVDS_HEADLESS_LOWRES` extends the working mode to a four-colour **200x120**
+source, scaled 4x horizontally and 5x vertically to fill the 800x600 panel.
+
+* The indexed source is 12,000 B. Each of the 120 scaled rows is stored as a
+  complete 925-word scanline, using 444,000 B. The complete build uses
+  488,300 B of the 512 KB SRAM.
+* One HSTX-paced data channel feeds complete lines. One control channel
+  advances the 1,024-entry descriptor ring; core1 remains idle.
+* The operator saw the full-screen scene and then its animation on the glass.
+  This verifies the source-to-LVDS expansion, integer scaling and blank-window
+  rebuild.
+* The descriptor ring still adds 354 guard lines, so refresh is about 37 Hz.
+  This is a probe mode, not a normal 60 Hz panel mode.
+* Animation is driven by core0 at 10 fps. It redraws and rebuilds only after
+  descriptor 669, using the approximately 9.3 ms guard window. Core1 never
+  becomes the scanout producer.
+* Four colours reduce source storage only. They do not reduce the number of
+  raw LVDS words transmitted for the scaled raster.
+* Only 33,576 B of main-SRAM heap remain. Core stacks live in the separate
+  Scratch X/Y memories and are not part of that heap figure.
+
+The full-frame PSRAM loop is retired. Its 2,479,000-byte stream produced no
+video on the first attempt and blinking on the second; it was never static.
+The working SRAM probe isolates that failure to the PSRAM full-frame loop, not
+the raw Command Expander words. A native-resolution scene was not attempted
+because one does not fit this SRAM-resident mechanism. The rollback baseline is:
+
+```console
+pio run -e RP2350-LEANCAM-LVDS-NCC -t upload
+```
+
 ## What is not here
 
 Files, menus, G-code, tool tables, machine safety, images, and a second panel.
@@ -144,6 +220,9 @@ project yet.
 
 ## Bench-only
 
-The close-of-frame tail, panel readability, the clock points, feed hold, Stop
-during queued motion and SD cold-start mounting are things only the machine can
-answer. No host sample proves any of them.
+The SRAM Command Expander bars and the animated 200x120 full-screen scene have
+been seen on the panel. The full-frame PSRAM variant failed, and the
+native-resolution scene comparison was not attempted. The close-of-frame tail,
+panel readability at normal refresh, the clock points, feed hold, Stop during
+queued motion and SD cold-start mounting remain bench items. No host sample
+proves any of them.

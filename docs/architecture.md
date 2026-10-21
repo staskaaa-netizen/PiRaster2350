@@ -12,7 +12,7 @@ explains why the parts are split where they are.
 | seam | `core/lvds_target.h` | nine calls that a target implements | nothing |
 | panel | `panels/sharp_lq121s1lg44.h` (62 lines) | geometry, timing, pins and clocks, as macros | nothing |
 | target: host | `targets/host/` (2 files, ~250 lines) | a 32bpp frame in RAM and a BMP writer | the seam |
-| target: rp2350 | `targets/rp2350/` (6 files, ~1,020 lines) | HSTX, the pacer LUT, the DMA descriptor ring, core1 and the line preparation, the SRAM framebuffer, PSRAM bring-up, the sixteen palette slots, four port hooks | the seam, the panel header, the Pico SDK |
+| target: rp2350 | `targets/rp2350/` (6 files) | HSTX, the pacer LUT, the DMA descriptor ring, core1 and the line preparation, the SRAM framebuffer, the guarded baked-frame experiment, PSRAM bring-up, the sixteen palette slots, four port hooks | the seam, the panel header, the Pico SDK |
 | samples | `samples/` (~470 lines) | one demo picture, drawn by three programs | the core |
 
 The project is smaller than 3,000 lines because of the split. The module that
@@ -103,6 +103,103 @@ The rules and the facts of this chain:
 * **The panel follows the active lines.** It does not count from the sync. The
   porches in the panel header are measured values. A different back porch does
   not move the picture on the glass.
+
+### Native packed-colour modes
+
+The normal core1 path accepts either 4bpp or 2bpp indexed pixels. At 2bpp:
+
+```
+  800x604 source, 4 pixels per byte      120,800 B
+        |  core1 reads two bytes
+        v
+  256-entry expansion table
+        |  eight 4-bit indices, as before
+        v
+  existing 7x256 colour LUT
+        |  existing seven-phase LVDS words
+        v
+  normal DMA scanout
+```
+
+Only the framebuffer packing and unpack step change. The palette LUT, line
+preparation, descriptor ring and core1 ownership remain the same. A 2bpp
+native build uses 177,900 B of RAM, leaving 345,320 B of heap.
+
+The expansion table is load-bearing for timing. A per-byte shift loop made the
+display unstable; two table lookups per eight pixels restored the realtime
+margin.
+
+At 1bpp, one byte carries eight pixels and the expansion table produces all
+eight nibble indices in one lookup. The same scene is limited to black and one
+green foreground. The framebuffer is 60,400 B and the complete native build
+uses 117,996 B of RAM with 405,224 B of heap left. No scanout component or
+seven-phase packing changes.
+
+### The headless SRAM bench path
+
+`LVDS_HEADLESS_SRAM_BARS` leaves the normal path unchanged and adds a frozen
+pattern probe below the same palette and LUT:
+
+```
+  4bpp SRAM framebuffer                        241,600 B
+        |  core0, once: the same active-line expansion core1 calls
+        v
+  command + 924 raw HSTX words
+  active line, blank line, VSYNC line in SRAM   11,100 B
+        |  1,024 descriptor entries, core1 idle
+        v
+  HSTX Command Expander <- one HSTX-paced DMA channel
+                             ^ one descriptor-advance channel
+```
+
+`rp2350_panel_bake_line()` writes one `RAW` command followed by the exact words
+the normal path prepares. The colour-bar probe reuses one such active line
+for every active row and keeps blank/VSYNC lines beside it. Core1 is not
+launched, so there is no preparation deadline or polling loop to hide a timing
+fault.
+
+The Command Expander count is 12 bits. A 924-word LVDS line fits in one command.
+`RAW_REPEAT` is not a scanline compressor: it repeats one 32-bit transfer,
+while an LVDS line cycles through seven distinct phase words.
+
+The mechanism has been seen working on the glass. The 1,024-entry ring adds 354
+guard lines, so its roughly 37 Hz refresh makes it a probe rather than a panel
+timing mode. The full 670-line frame in PSRAM is retired: it produced no video
+and then blinking. Its palette is frozen into any bake, so there is no live
+palette on this path.
+
+### The 200x120 full-screen mode
+
+`LVDS_HEADLESS_LOWRES` reuses the same LUT and SRAM line transport with a
+smaller source:
+
+```
+  200x120 4bpp source in SRAM                     12,000 B
+        |  repeat each pixel 4x horizontally
+        v
+  one complete 925-word scanline per source row
+        |  store all 120 rows                       444,000 B
+        |  repeat each row 5x vertically in the descriptor ring
+        v
+  one data channel + one descriptor channel
+        v
+  HSTX Command Expander, core1 idle
+```
+
+The source stays indexed. A startup pass repeats each source pixel four times
+into an eight-pixel LUT group, so the existing seven-phase expansion produces a
+full 800-pixel row. There are only 120 unique active rows; the descriptor ring
+selects each row five times to reach 600 visible lines. Keeping each row as one
+complete command avoids a phase discontinuity at a command boundary.
+
+The operator saw the four-colour scene full-screen on the panel. The mode uses
+488,300 B of static RAM and has 33,576 B of heap left. Its 1,024-line ring
+keeps the same roughly 37 Hz probe refresh.
+
+For animation, core0 waits until the descriptor pointer has passed the active
+frame. It then redraws the 200x120 source and rebuilds all 120 complete rows in
+the approximately 9.3 ms guard window before scanout wraps. DMA never stops,
+and core1 remains idle. The scene runs at 10 fps.
 
 ## The palette
 
